@@ -8,6 +8,21 @@ const express_1 = require("express");
 const db_1 = __importDefault(require("../config/db"));
 const auth_1 = require("../middlewares/auth");
 const router = (0, express_1.Router)();
+let isRegistrationOpen = true;
+// 获取报名通道状态 (公开)
+router.get('/registrations/status', (req, res) => {
+    res.json({ success: true, code: 200, message: '获取状态成功', data: { isOpen: isRegistrationOpen } });
+});
+// 管理员设置报名通道状态
+router.post('/admin/registrations/status', auth_1.authMiddleware, (req, res) => {
+    if (typeof req.body.isOpen === 'boolean') {
+        isRegistrationOpen = req.body.isOpen;
+        res.json({ success: true, code: 200, message: '报名通道状态更新成功', data: { isOpen: isRegistrationOpen } });
+    }
+    else {
+        res.status(400).json({ success: false, code: 400, message: '无效的参数', data: null });
+    }
+});
 const getPeriodId = () => {
     const now = new Date();
     const start = new Date(now.getFullYear(), 0, 1);
@@ -19,12 +34,21 @@ const getPeriodId = () => {
 exports.getPeriodId = getPeriodId;
 // C端: POST /api/registrations
 router.post('/registrations', async (req, res) => {
-    const { battleTag, wechatId, primaryRoles, secondaryRoles, selfRanks } = req.body;
-    if (!battleTag || !wechatId || !primaryRoles || primaryRoles.length === 0) {
+    if (!isRegistrationOpen) {
+        const response = {
+            success: false,
+            code: 403,
+            message: '当前报名通道已关闭，暂不接受报名',
+            data: null
+        };
+        return res.status(403).json(response);
+    }
+    const { battleTag, wechatId, wechatGroup, primaryRoles, secondaryRoles, selfRanks } = req.body;
+    if (!battleTag || !wechatId || !wechatGroup || !primaryRoles || primaryRoles.length === 0) {
         const response = {
             success: false,
             code: 400,
-            message: '参数错误，缺少战网标识、微信号或首选职责',
+            message: '参数错误，缺少战网标识、微信昵称、群组或首选职责',
             data: null
         };
         return res.status(400).json(response);
@@ -63,7 +87,7 @@ router.post('/registrations', async (req, res) => {
             };
             return res.status(409).json(response);
         }
-        await db_1.default.query('INSERT INTO registrations (battle_tag, wechat_id, primary_roles, secondary_roles, self_ranks, period_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())', [battleTag, wechatId, JSON.stringify(primaryRoles), JSON.stringify(secondaryRoles || []), JSON.stringify(selfRanks || {}), periodId]);
+        await db_1.default.query('INSERT INTO registrations (battle_tag, wechat_id, wechat_group, primary_roles, secondary_roles, self_ranks, period_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())', [battleTag, wechatId, wechatGroup, JSON.stringify(primaryRoles), JSON.stringify(secondaryRoles || []), JSON.stringify(selfRanks || {}), periodId]);
         const response = {
             success: true,
             code: 200,
@@ -87,7 +111,7 @@ router.post('/registrations', async (req, res) => {
 router.get('/admin/registrations', auth_1.authMiddleware, async (req, res) => {
     const periodId = (0, exports.getPeriodId)();
     try {
-        const result = await db_1.default.query('SELECT id, battle_tag as "battleTag", wechat_id as "wechatId", primary_roles as "primaryRoles", secondary_roles as "secondaryRoles", self_ranks as "selfRanks", queried_ranks as "queriedRanks", period_id as "periodId", created_at as "createdAt" FROM registrations WHERE period_id = $1 ORDER BY created_at DESC', [periodId]);
+        const result = await db_1.default.query('SELECT id, battle_tag as "battleTag", wechat_id as "wechatId", wechat_group as "wechatGroup", primary_roles as "primaryRoles", secondary_roles as "secondaryRoles", self_ranks as "selfRanks", queried_ranks as "queriedRanks", period_id as "periodId", created_at as "createdAt" FROM registrations WHERE period_id = $1 ORDER BY created_at DESC', [periodId]);
         const response = {
             success: true,
             code: 200,
@@ -105,6 +129,22 @@ router.get('/admin/registrations', auth_1.authMiddleware, async (req, res) => {
             data: null
         };
         return res.status(500).json(response);
+    }
+});
+// B端: DELETE /api/admin/registrations/:id
+router.delete('/admin/registrations/:id', auth_1.authMiddleware, async (req, res) => {
+    const { id } = req.params;
+    if (id === 'clear') {
+        // 转发给 clear 逻辑
+        return;
+    }
+    try {
+        await db_1.default.query('DELETE FROM registrations WHERE id = $1', [id]);
+        return res.status(200).json({ success: true, code: 200, message: '删除报名信息成功', data: null });
+    }
+    catch (error) {
+        console.error('Delete registration error:', error);
+        return res.status(500).json({ success: false, code: 500, message: '服务器内部错误', data: null });
     }
 });
 // B端: DELETE /api/admin/registrations/clear

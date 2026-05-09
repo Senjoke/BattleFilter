@@ -21,6 +21,21 @@ const teamGroups = ref<any[]>([])
 const matches = ref<any[]>([])
 const playerPool = ref<any[]>([])
 const batchTargetTeamId = ref<number | string>('')
+const isRegistrationOpen = ref(true)
+
+// 筛选状态
+const filterGroupRegistration = ref('all')
+const filterGroupPlayerPool = ref('all')
+
+const filteredPlayers = computed(() => {
+  if (filterGroupRegistration.value === 'all') return players.value;
+  return players.value.filter(p => p.wechatGroup === filterGroupRegistration.value);
+})
+
+const filteredPlayerPool = computed(() => {
+  if (filterGroupPlayerPool.value === 'all') return playerPool.value;
+  return playerPool.value.filter(p => p.wechatGroup === filterGroupPlayerPool.value);
+})
 
 // 职位映射
 const roleMap: Record<string, string> = {
@@ -30,7 +45,7 @@ const roleMap: Record<string, string> = {
 }
 
 const translateRoles = (rolesArray: string[]) => {
-  if (!rolesArray || !Array.isArray(rolesArray)) return '未知'
+  if (!rolesArray || !Array.isArray(rolesArray) || rolesArray.length === 0) return '无'
   return rolesArray.map(r => roleMap[r] || r).join(', ')
 }
 
@@ -40,10 +55,41 @@ onMounted(async () => {
 })
 
 const fetchData = async () => {
+  await fetchRegistrationStatus()
   await fetchRegistrations()
   await fetchTeams()
   await fetchMatches()
   await fetchAnnouncement()
+}
+
+const fetchRegistrationStatus = async () => {
+  try {
+    const res: any = await request.get('/registrations/status')
+    if (res.success && res.data) {
+      isRegistrationOpen.value = res.data.isOpen
+    }
+  } catch (error) {
+    console.error('获取报名状态失败', error)
+  }
+}
+
+const toggleRegistrationStatus = async () => {
+  const newStatus = !isRegistrationOpen.value
+  const actionText = newStatus ? '开启' : '关闭'
+  
+  showConfirm(`确定要${actionText}报名通道吗？${!newStatus ? '关闭后用户将无法提交新的报名信息。' : ''}`, async () => {
+    try {
+      const res: any = await request.post('/admin/registrations/status', { isOpen: newStatus })
+      if (res.success) {
+        isRegistrationOpen.value = newStatus
+        alert(`报名通道已${actionText}`)
+      } else {
+        alert(res.message || '操作失败')
+      }
+    } catch (error: any) {
+      alert(error.response?.data?.message || '网络错误，操作失败')
+    }
+  })
 }
 
 const fetchRegistrations = async () => {
@@ -54,11 +100,12 @@ const fetchRegistrations = async () => {
         const prim = p.primaryRoles || p.primary_roles || []
         const sec = p.secondaryRoles || p.secondary_roles || []
         return {
-          id: p.id,
-          nickname: (p.battleTag || p.battle_tag || '').split('#')[0] || '未知玩家',
-          gameId: p.battleTag || p.battle_tag,
-          wechatId: p.wechatId || p.wechat_id || '未提供',
-          rawRoles: Array.from(new Set([...prim, ...sec])),
+            id: p.id,
+            nickname: (p.battleTag || p.battle_tag || '').split('#')[0] || '未知玩家',
+            gameId: p.battleTag || p.battle_tag,
+            wechatId: p.wechatId || p.wechat_id || '未提供',
+            wechatGroup: p.wechatGroup || p.wechat_group || '未知',
+            rawRoles: Array.from(new Set([...prim, ...sec])),
           primaryRolesText: translateRoles(prim),
           secondaryRolesText: translateRoles(sec),
           selfRanks: p.selfRanks || p.self_ranks || {},
@@ -70,6 +117,21 @@ const fetchRegistrations = async () => {
   } catch (error) {
     console.error(error)
   }
+}
+
+const deleteRegistration = async (id: number) => {
+  showConfirm('确定要删除该条报名信息吗？', async () => {
+    try {
+      const res: any = await request.delete(`/admin/registrations/${id}`)
+      if (res.success) {
+        await fetchData()
+      } else {
+        alert(res.message)
+      }
+    } catch (error: any) {
+      alert(error.response?.data?.message || '删除失败')
+    }
+  })
 }
 
 const clearRegistrations = async () => {
@@ -240,7 +302,7 @@ const allFlatTeams = computed(() => {
   return list
 })
 
-// 为队伍生成固定的 5 个槽位：1重装 2输出 2支援
+// 为队伍生成固定的 5 个槽位，优先对号入座，多的塞进空位
 const getTeamSlots = (members: any[]) => {
   const slots = [
     { role: 'tank', label: '重装', member: null as any },
@@ -250,16 +312,28 @@ const getTeamSlots = (members: any[]) => {
     { role: 'support', label: '支援', member: null as any }
   ]
   
-  const usedMemberIndexes = new Set()
+  const unassignedMembers: any[] = []
   
-  // 先把有 assignedRole 的对号入座
-  members.forEach((m, idx) => {
+  // 先把有 assignedRole 且槽位未满的对号入座
+  members.forEach((m) => {
     if (m.assignedRole) {
       const emptySlotIndex = slots.findIndex(s => s.role === m.assignedRole && !s.member)
       if (emptySlotIndex > -1) {
         slots[emptySlotIndex].member = m
-        usedMemberIndexes.add(idx)
+      } else {
+        unassignedMembers.push(m)
       }
+    } else {
+      unassignedMembers.push(m)
+    }
+  })
+  
+  // 将剩余的成员塞入空位
+  unassignedMembers.forEach((m) => {
+    const emptySlotIndex = slots.findIndex(s => !s.member)
+    if (emptySlotIndex > -1) {
+      slots[emptySlotIndex].member = m
+      slots[emptySlotIndex].label = '越界/补位'
     }
   })
   
@@ -296,20 +370,44 @@ const deleteTeamGroup = async (groupId: string) => {
   })
 }
 
-const autofillGroup = async (groupId: string) => {
-  showConfirm('确定要自动填充本组队伍吗？系统将从选手池中按职责分配。', async () => {
-    try {
-      const res: any = await request.post(`/admin/teams/group/${groupId}/autofill`)
-      if (res.success) {
-        await fetchTeams()
-        alert('自动填充完成')
-      } else {
-        alert(res.message)
-      }
-    } catch (error: any) {
-      alert(error.response?.data?.message || '自动填充失败')
-    }
+const autofillModal = ref({
+  show: false,
+  groupId: '',
+  wechatGroup: '',
+  options: [] as string[]
+})
+
+const openAutofillModal = (groupId: string) => {
+  const groups = new Set<string>()
+  playerPool.value.forEach(p => {
+    if (p.wechatGroup) groups.add(p.wechatGroup)
   })
+  
+  autofillModal.value.options = Array.from(groups)
+  autofillModal.value.wechatGroup = autofillModal.value.options.length > 0 ? autofillModal.value.options[0] : ''
+  autofillModal.value.groupId = groupId
+  autofillModal.value.show = true
+}
+
+const confirmAutofill = async () => {
+  const { groupId, wechatGroup } = autofillModal.value
+  autofillModal.value.show = false
+  
+  try {
+    const res: any = await request.post(`/admin/teams/group/${groupId}/autofill`, { wechatGroup })
+    if (res.success) {
+      await fetchTeams()
+      alert('自动填充完成')
+    } else {
+      alert(res.message)
+    }
+  } catch (error: any) {
+    alert(error.response?.data?.message || '自动填充失败')
+  }
+}
+
+const closeAutofillModal = () => {
+  autofillModal.value.show = false
 }
 
 const saveTeamChanges = async (team: any) => {
@@ -364,8 +462,12 @@ const removePlayerFromTeam = async (teamId: number, gameId: string) => {
   })
 }
 
-// 尝试将一个玩家加入一个队伍（寻找符合其职责的空位）
+// 尝试将一个玩家加入一个队伍（无视职责限制，仅保留 5 人上限）
 const tryAddPlayerToTeam = (player: any, team: any): boolean => {
+  if (team.members.length >= 5) {
+    return false
+  }
+
   const slots = getTeamSlots(team.members)
   // 获取队伍当前还缺少的职位
   const missingRoles = slots.filter(s => !s.member).map(s => s.role)
@@ -373,21 +475,21 @@ const tryAddPlayerToTeam = (player: any, team: any): boolean => {
   // 检查玩家能否打这些缺少的职位
   const playerCanPlay = player.rawRoles || []
   
-  // 找到第一个匹配的空位职位
-  const matchedRole = missingRoles.find(role => playerCanPlay.includes(role))
-  
-  if (matchedRole) {
-    team.members.push({
-      id: player.id,
-      nickname: player.nickname,
-      gameId: player.gameId,
-      roles: player.rawRoles,
-      assignedRole: matchedRole,
-      score: player.rank || 0
-    })
-    return true
+  // 尽量优先分配匹配的空位，如果不匹配则随机分配一个空位，如果没有空位则分配"补位"
+  let matchedRole = missingRoles.find(role => playerCanPlay.includes(role))
+  if (!matchedRole) {
+    matchedRole = missingRoles.length > 0 ? missingRoles[0] : 'flex'
   }
-  return false
+  
+  team.members.push({
+    id: player.id,
+    nickname: player.nickname,
+    gameId: player.gameId,
+    roles: player.rawRoles,
+    assignedRole: matchedRole,
+    score: player.rank || 0
+  })
+  return true
 }
 
 // 单个加入
@@ -401,7 +503,7 @@ const addPlayerToTeam = async (playerGameId: string, teamId: number | string) =>
     if (success) {
       await saveTeamChanges(team)
     } else {
-      alert(`队伍 [${team.name}] 已经没有适合该玩家职责的空位了`)
+      alert(`队伍 [${team.name}] 已经满 5 人，无法继续加入`)
     }
   }
 }
@@ -432,7 +534,7 @@ const batchAddPlayers = async () => {
   }
   
   if (failedNames.length > 0) {
-    alert(`成功加入 ${addedCount} 人。\n\n以下选手因位置冲突或队伍已满未能加入：\n${failedNames.join(', ')}`)
+    alert(`成功加入 ${addedCount} 人。\n\n以下选手因队伍已满未能加入：\n${failedNames.join(', ')}`)
   } else {
     alert(`成功批量加入 ${addedCount} 人！`)
   }
@@ -636,26 +738,57 @@ const handleLogout = () => {
         <!-- Registration Hall -->
         <div v-if="currentTab === 'registration'">
           <div class="flex justify-between items-center mb-6">
-            <h2 class="text-2xl font-bold text-gray-800">报名大厅</h2>
+            <div class="flex items-center space-x-4">
+              <h2 class="text-2xl font-bold text-gray-800">报名大厅</h2>
+              <select v-model="filterGroupRegistration" class="border border-gray-300 rounded-md text-sm py-1.5 px-3 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                <option value="all">全部群组</option>
+                <option value="一群">一群</option>
+                <option value="二群">二群</option>
+              </select>
+              
+              <!-- 报名通道开关 -->
+              <div class="flex items-center space-x-2 ml-4 bg-gray-50 px-3 py-1.5 rounded-md border border-gray-200">
+                <span class="text-sm font-medium text-gray-700">报名通道</span>
+                <button 
+                  @click="toggleRegistrationStatus"
+                  :class="isRegistrationOpen ? 'bg-green-500' : 'bg-gray-300'"
+                  class="relative inline-flex h-5 w-10 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none"
+                >
+                  <span 
+                    aria-hidden="true" 
+                    :class="isRegistrationOpen ? 'translate-x-5' : 'translate-x-0'"
+                    class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+                  ></span>
+                </button>
+                <span class="text-xs" :class="isRegistrationOpen ? 'text-green-600 font-bold' : 'text-gray-500'">{{ isRegistrationOpen ? '已开启' : '已关闭' }}</span>
+              </div>
+            </div>
             <button @click="clearRegistrations" class="flex items-center bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
               <Trash2 class="w-4 h-4 mr-1" /> 移除全部
             </button>
           </div>
-          <div class="overflow-x-auto whitespace-nowrap">
+          <div class="w-full max-w-[100vw] overflow-x-auto whitespace-nowrap border border-gray-200 rounded-lg" style="-webkit-overflow-scrolling: touch;">
             <table class="min-w-full divide-y divide-gray-200">
               <thead class="bg-gray-50">
                 <tr>
                   <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">玩家昵称 (战网ID)</th>
-                  <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">微信号</th>
+                  <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">群组</th>
+                  <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">微信昵称</th>
                   <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">首选职责</th>
                   <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">补位职责</th>
                   <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">自填段位</th>
                   <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">报名时间</th>
+                  <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
                 </tr>
               </thead>
               <tbody class="bg-white divide-y divide-gray-200">
-                <tr v-for="player in players" :key="player.id">
+                <tr v-for="player in filteredPlayers" :key="player.id">
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{{ player.gameId }}</td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <span :class="player.wechatGroup === '一群' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'" class="px-2 py-1 rounded text-xs font-medium">
+                      {{ player.wechatGroup }}
+                    </span>
+                  </td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ player.wechatId }}</td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ player.primaryRolesText || '无' }}</td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ player.secondaryRolesText || '无' }}</td>
@@ -668,9 +801,12 @@ const handleLogout = () => {
                     <span v-else>未填</span>
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ player.registerTime }}</td>
+                  <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <button @click="deleteRegistration(player.id)" class="text-red-600 hover:text-red-900">删除</button>
+                  </td>
                 </tr>
-                <tr v-if="players.length === 0">
-                  <td colspan="6" class="px-6 py-10 text-center text-gray-500">暂无报名数据</td>
+                <tr v-if="filteredPlayers.length === 0">
+                  <td colspan="8" class="px-6 py-10 text-center text-gray-500">暂无报名数据</td>
                 </tr>
               </tbody>
             </table>
@@ -695,7 +831,7 @@ const handleLogout = () => {
             <div class="bg-gray-100 px-4 py-3 border-b border-gray-200 flex justify-between items-center">
               <h3 class="font-bold text-gray-700">对战组 {{ idx + 1 }}</h3>
               <div class="flex space-x-3">
-                <button @click="autofillGroup(group.groupId)" class="flex items-center text-sm text-blue-600 hover:text-blue-800 bg-white border border-blue-200 px-3 py-1.5 rounded-md shadow-sm">
+                <button @click="openAutofillModal(group.groupId)" class="flex items-center text-sm text-blue-600 hover:text-blue-800 bg-white border border-blue-200 px-3 py-1.5 rounded-md shadow-sm">
                   <Wand2 class="w-4 h-4 mr-1" /> 自动填充本组
                 </button>
                 <button @click="deleteTeamGroup(group.groupId)" class="flex items-center text-sm text-red-600 hover:text-red-800 bg-white border border-red-200 px-3 py-1.5 rounded-md shadow-sm">
@@ -706,22 +842,33 @@ const handleLogout = () => {
             
             <div class="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
               <div v-for="team in group.teams" :key="team.id" class="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
-                <div class="flex items-center justify-center mb-3 border-b pb-2">
-                  <h4 class="text-lg font-semibold text-gray-800">{{ team.name }}</h4>
-                  <button @click="editTeamName(team)" class="ml-2 text-gray-400 hover:text-blue-600" title="修改队伍名称">
-                    <Edit2 class="w-4 h-4" />
-                  </button>
+                <div class="flex items-center justify-between mb-3 border-b pb-2">
+                  <div class="flex items-center">
+                    <h4 class="text-lg font-semibold text-gray-800">{{ team.name }}</h4>
+                    <button @click="editTeamName(team)" class="ml-2 text-gray-400 hover:text-blue-600" title="修改队伍名称">
+                      <Edit2 class="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div class="text-xs text-blue-700 bg-blue-50 border border-blue-100 px-2 py-1 rounded font-medium">
+                    均分: {{ Math.round(team.avgScore) }}
+                  </div>
                 </div>
                 <ul class="space-y-2">
                   <!-- 渲染5个职责槽位 -->
                   <li v-for="(slot, i) in getTeamSlots(team.members)" :key="i" class="flex justify-between items-center p-2 rounded bg-gray-50 border border-gray-100">
                     <div class="flex items-center">
-                      <span class="inline-block w-12 text-xs font-bold text-gray-400 text-center mr-3">{{ slot.label }}</span>
+                      <span class="inline-block w-16 text-xs font-bold text-gray-400 text-center mr-2">{{ slot.label }}</span>
                       <span v-if="slot.member" class="text-sm font-medium text-gray-900">{{ slot.member.nickname }}</span>
                       <span v-else class="text-sm italic text-gray-400">空缺</span>
                     </div>
                     <div v-if="slot.member" class="flex items-center space-x-2">
-                      <span class="text-xs text-gray-500">{{ slot.member.gameId }}</span>
+                      <select v-model="slot.member.assignedRole" @change="saveTeamChanges(team)" class="text-xs border border-gray-200 rounded px-1 py-0.5 bg-white focus:outline-none text-gray-600">
+                        <option value="tank">重装</option>
+                        <option value="damage">输出</option>
+                        <option value="support">支援</option>
+                        <option value="flex">补位</option>
+                      </select>
+                      <span class="text-xs text-gray-500 w-16 truncate" :title="slot.member.gameId">{{ slot.member.gameId.split('#')[1] ? '#' + slot.member.gameId.split('#')[1] : slot.member.gameId }}</span>
                       <button @click="removePlayerFromTeam(team.id, slot.member.gameId)" class="text-gray-400 hover:text-red-500 p-1 rounded-full hover:bg-red-50 transition-colors" title="移出队伍">
                         <X class="w-4 h-4" />
                       </button>
@@ -734,54 +881,78 @@ const handleLogout = () => {
 
           <!-- Unassigned Player Pool -->
           <div class="mt-12">
-            <div class="flex justify-between items-center mb-4">
-              <h3 class="text-xl font-bold text-gray-800">未分配选手池</h3>
+            <div class="flex flex-col sm:flex-row sm:justify-between items-start sm:items-center gap-4 mb-4">
+              <div class="flex items-center space-x-4">
+                <h3 class="text-xl font-bold text-gray-800">未分配选手池</h3>
+                <select v-model="filterGroupPlayerPool" class="border border-gray-300 rounded-md text-sm py-1.5 px-3 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                  <option value="all">全部群组</option>
+                  <option value="一群">一群</option>
+                  <option value="二群">二群</option>
+                </select>
+              </div>
               <!-- 批量操作区 -->
-              <div class="flex items-center space-x-2 bg-white p-2 rounded-lg border border-gray-200 shadow-sm">
-                <span class="text-sm text-gray-500 font-medium ml-2">批量操作：</span>
-                <select v-model="batchTargetTeamId" class="border border-gray-300 rounded-md text-sm py-1.5 pl-3 pr-8 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+              <div class="flex flex-wrap sm:flex-nowrap items-center gap-2 bg-white p-2 rounded-lg border border-gray-200 shadow-sm w-full sm:w-auto">
+                <span class="text-sm text-gray-500 font-medium ml-1">批量操作：</span>
+                <select v-model="batchTargetTeamId" class="flex-1 sm:flex-none border border-gray-300 rounded-md text-sm py-1.5 pl-3 pr-8 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
                   <option value="" disabled>选择目标队伍</option>
                   <option v-for="team in allFlatTeams" :key="team.id" :value="team.id">
                     {{ team.displayName }}
                   </option>
                 </select>
-                <button @click="batchAddPlayers" :disabled="!batchTargetTeamId" class="px-4 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                <button @click="batchAddPlayers" :disabled="!batchTargetTeamId" class="px-4 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors whitespace-nowrap">
                   批量加入
                 </button>
               </div>
             </div>
             
-            <div class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
-              <ul class="divide-y divide-gray-200">
-                <li v-for="player in playerPool" :key="player.gameId" class="p-4 flex flex-col sm:flex-row sm:items-center justify-between hover:bg-gray-50 transition-colors">
-                  <div class="flex items-center space-x-4 mb-3 sm:mb-0">
-                    <input type="checkbox" v-model="player.selected" class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
-                    <span class="font-medium text-gray-900">{{ player.gameId }}</span>
-                    <span class="text-sm text-gray-500">WX: {{ player.wechatId }}</span>
-                    <span class="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded">首选: {{ player.primaryRolesText }}</span>
-                    <span v-if="player.secondaryRolesText" class="text-xs px-2 py-1 bg-gray-50 text-gray-500 rounded border border-dashed">补: {{ player.secondaryRolesText }}</span>
-                    <div v-if="player.selfRanks && Object.keys(player.selfRanks).length > 0" class="text-xs text-gray-500 space-x-1">
-                      <span v-if="player.selfRanks.tank">坦:{{ player.selfRanks.tank }}</span>
-                      <span v-if="player.selfRanks.damage">输:{{ player.selfRanks.damage }}</span>
-                      <span v-if="player.selfRanks.support">支:{{ player.selfRanks.support }}</span>
-                    </div>
-                  </div>
-                  <div class="flex items-center space-x-2">
-                    <select v-model="player.selectedTeamId" class="border border-gray-300 rounded-md text-sm py-1.5 pl-3 pr-8 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
-                      <option value="" disabled>选择加入的队伍</option>
-                      <option v-for="team in allFlatTeams" :key="team.id" :value="team.id">
-                        {{ team.displayName }}
-                      </option>
-                    </select>
-                    <button @click="addPlayerToTeam(player.gameId, player.selectedTeamId)" :disabled="!player.selectedTeamId" class="px-3 py-1.5 bg-gray-800 text-white text-sm font-medium rounded-md hover:bg-gray-900 disabled:opacity-50 transition-colors">
-                      单人加入
-                    </button>
-                  </div>
-                </li>
-                <li v-if="playerPool.length === 0" class="p-8 text-center text-gray-500">
-                  当前没有未分配选手
-                </li>
-              </ul>
+            <div class="w-full max-w-[100vw] overflow-x-auto whitespace-nowrap border border-gray-200 rounded-lg shadow-sm" style="-webkit-overflow-scrolling: touch;">
+              <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                  <tr>
+                    <th scope="col" class="px-4 py-3 text-left w-10"></th>
+                    <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">战网ID</th>
+                    <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">微信昵称</th>
+                    <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">职责与段位</th>
+                    <th scope="col" class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                  </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                  <tr v-for="player in filteredPlayerPool" :key="player.gameId" class="hover:bg-gray-50 transition-colors">
+                    <td class="px-4 py-4 whitespace-nowrap">
+                      <input type="checkbox" v-model="player.selected" class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                    </td>
+                    <td class="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{{ player.gameId }}</td>
+                    <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{{ player.wechatId || '未知' }}</td>
+                    <td class="px-4 py-4 whitespace-nowrap">
+                      <div class="flex items-center space-x-2">
+                        <span class="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded">首选: {{ player.primaryRolesText }}</span>
+                        <span v-if="player.secondaryRolesText && player.secondaryRolesText !== '无'" class="text-xs px-2 py-1 bg-gray-50 text-gray-500 rounded border border-dashed">补: {{ player.secondaryRolesText }}</span>
+                        <div v-if="player.selfRanks && Object.keys(player.selfRanks).length > 0" class="text-xs text-gray-500 space-x-1 flex items-center ml-2">
+                          <span v-if="player.selfRanks.tank" class="bg-blue-50 text-blue-600 px-1 rounded">坦:{{ player.selfRanks.tank }}</span>
+                          <span v-if="player.selfRanks.damage" class="bg-red-50 text-red-600 px-1 rounded">输:{{ player.selfRanks.damage }}</span>
+                          <span v-if="player.selfRanks.support" class="bg-green-50 text-green-600 px-1 rounded">支:{{ player.selfRanks.support }}</span>
+                        </div>
+                      </div>
+                    </td>
+                    <td class="px-4 py-4 whitespace-nowrap text-right">
+                      <div class="flex items-center justify-end space-x-2">
+                        <select v-model="player.selectedTeamId" class="border border-gray-300 rounded-md text-sm py-1 pl-2 pr-6 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
+                          <option value="" disabled>选择队伍</option>
+                          <option v-for="team in allFlatTeams" :key="team.id" :value="team.id">
+                            {{ team.displayName }}
+                          </option>
+                        </select>
+                        <button @click="addPlayerToTeam(player.gameId, player.selectedTeamId)" :disabled="!player.selectedTeamId" class="px-3 py-1 bg-gray-800 text-white text-sm font-medium rounded-md hover:bg-gray-900 disabled:opacity-50 transition-colors">
+                          单人加入
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr v-if="filteredPlayerPool.length === 0">
+                    <td colspan="5" class="px-4 py-8 text-center text-gray-500">当前没有未分配选手</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -881,6 +1052,31 @@ const handleLogout = () => {
               <button @click="saveScore" class="px-4 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 transition-colors">保存比分</button>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Autofill Modal -->
+    <div v-if="autofillModal.show" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/25 transition-opacity" style="background-color: rgba(0, 0, 0, 0.25);">
+      <div class="bg-white rounded-lg shadow-xl max-w-sm w-full p-6 transform transition-all">
+        <h3 class="text-lg font-medium text-gray-900 mb-4">自动填充</h3>
+        <p class="text-sm text-gray-500 mb-4">请选择要分配的微信群。系统将自动挑选该群的玩家填入本对战组的两支队伍中，并尽量保证双方实力均衡。</p>
+        
+        <div class="mb-6">
+          <label class="block text-sm font-medium text-gray-700 mb-2">目标微信群</label>
+          <select v-model="autofillModal.wechatGroup" class="w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+            <option value="">所有群混合 (不限制群)</option>
+            <option v-for="group in autofillModal.options" :key="group" :value="group">{{ group }}</option>
+          </select>
+        </div>
+
+        <div class="flex justify-end space-x-3">
+          <button @click="closeAutofillModal" class="px-4 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-md text-sm font-medium transition-colors">
+            取消
+          </button>
+          <button @click="confirmAutofill" class="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-md text-sm font-medium transition-colors shadow-sm">
+            开始填充
+          </button>
         </div>
       </div>
     </div>

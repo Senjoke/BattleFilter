@@ -15,6 +15,7 @@ CREATE TABLE registrations (
   id SERIAL PRIMARY KEY,
   battle_tag VARCHAR(255) NOT NULL,
   wechat_id VARCHAR(255) NOT NULL,
+  wechat_group VARCHAR(50) NOT NULL,
   primary_roles JSONB NOT NULL,
   secondary_roles JSONB,
   self_ranks JSONB,

@@ -8,6 +8,7 @@ import { onMounted } from 'vue'
 const router = useRouter()
 const battlenetId = ref('')
 const wechatId = ref('')
+const wechatGroup = ref('一群')
 const primaryRoles = ref<string[]>([])
 const secondaryRoles = ref<string[]>([])
 const selfRanks = ref({
@@ -17,11 +18,21 @@ const selfRanks = ref({
 })
 const isSubmitted = ref(false)
 const announcement = ref<any>(null)
+const isRegistrationOpen = ref(true)
 
 const rankTiers = ['青铜', '白银', '黄金', '白金', '钻石', '大师', '宗师', '英杰']
 const rankOptions = rankTiers.flatMap(tier => [5, 4, 3, 2, 1].map(div => `${tier}${div}`))
 
 onMounted(async () => {
+  try {
+    const statusRes: any = await request.get('/registrations/status')
+    if (statusRes.success && statusRes.data) {
+      isRegistrationOpen.value = statusRes.data.isOpen
+    }
+  } catch (error) {
+    console.error('获取报名状态失败', error)
+  }
+
   try {
     const res: any = await request.get('/announcements')
     if (res.success && res.data) {
@@ -95,6 +106,7 @@ const submitRegistration = async () => {
     const res: any = await request.post('/registrations', {
       battleTag: battlenetId.value,
       wechatId: wechatId.value,
+      wechatGroup: wechatGroup.value,
       primaryRoles: primaryRoles.value,
       secondaryRoles: secondaryRoles.value,
       selfRanks: selfRanks.value
@@ -139,7 +151,20 @@ const submitRegistration = async () => {
     </div>
 
     <div class="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-      <div class="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
+      <div v-if="!isRegistrationOpen" class="bg-white py-12 px-4 shadow sm:rounded-lg sm:px-10 text-center">
+        <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100 mb-4">
+          <svg class="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+          </svg>
+        </div>
+        <h3 class="text-lg leading-6 font-medium text-gray-900 mb-2">报名通道已关闭</h3>
+        <p class="text-sm text-gray-500 mb-6">当前周期的报名通道已被管理员关闭，暂不接受新的报名请求。您可以前往赛事看板查看当前进度。</p>
+        <button @click="router.push('/board')" class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+          前往赛事看板
+        </button>
+      </div>
+
+      <div v-else class="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
         <div v-if="!isSubmitted">
           <form class="space-y-6" @submit.prevent="handleFormSubmit">
             <div>
@@ -161,17 +186,21 @@ const submitRegistration = async () => {
 
             <div>
               <label for="wechat" class="block text-sm font-medium text-gray-700">
-                微信号
+                微信昵称
               </label>
-              <div class="mt-1">
+              <div class="mt-1 flex space-x-2">
+                <select v-model="wechatGroup" class="block w-24 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-orange-500 focus:border-orange-500 sm:text-sm">
+                  <option value="一群">一群</option>
+                  <option value="二群">二群</option>
+                </select>
                 <input
                   id="wechat"
                   v-model="wechatId"
                   name="wechat"
                   type="text"
-                  placeholder="请输入您的微信号"
+                  placeholder="请输入您的微信昵称"
                   required
-                  class="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-orange-500 focus:border-orange-500 sm:text-sm"
+                  class="appearance-none block flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-orange-500 focus:border-orange-500 sm:text-sm"
                 />
               </div>
             </div>
@@ -184,21 +213,21 @@ const submitRegistration = async () => {
                 <div class="flex items-center space-x-3">
                   <span class="text-sm font-medium text-gray-700 w-12 text-right">重装</span>
                   <select v-model="selfRanks.tank" class="flex-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-orange-500 focus:border-orange-500 sm:text-sm rounded-md border">
-                    <option value="">未定级 / 不想填</option>
+                    <option value="">未定级</option>
                     <option v-for="rank in rankOptions" :key="rank" :value="rank">{{ rank }}</option>
                   </select>
                 </div>
                 <div class="flex items-center space-x-3">
                   <span class="text-sm font-medium text-gray-700 w-12 text-right">输出</span>
                   <select v-model="selfRanks.damage" class="flex-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-orange-500 focus:border-orange-500 sm:text-sm rounded-md border">
-                    <option value="">未定级 / 不想填</option>
+                    <option value="">未定级</option>
                     <option v-for="rank in rankOptions" :key="rank" :value="rank">{{ rank }}</option>
                   </select>
                 </div>
                 <div class="flex items-center space-x-3">
                   <span class="text-sm font-medium text-gray-700 w-12 text-right">支援</span>
                   <select v-model="selfRanks.support" class="flex-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-orange-500 focus:border-orange-500 sm:text-sm rounded-md border">
-                    <option value="">未定级 / 不想填</option>
+                    <option value="">未定级</option>
                     <option v-for="rank in rankOptions" :key="rank" :value="rank">{{ rank }}</option>
                   </select>
                 </div>

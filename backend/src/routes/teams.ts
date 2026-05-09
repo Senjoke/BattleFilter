@@ -6,6 +6,40 @@ import { getPeriodId } from './registration';
 
 const router = Router();
 
+// 段位转换分数工具函数
+const rankToScore = (rankStr: string | undefined): number => {
+  if (!rankStr || rankStr === '未定级') return 1500; // 默认白银
+  const tiers: Record<string, number> = {
+    '青铜': 1000,
+    '白银': 1500,
+    '黄金': 2000,
+    '白金': 2500,
+    '钻石': 3000,
+    '大师': 3500,
+    '宗师': 4000,
+    '英杰': 4500
+  };
+  const match = rankStr.match(/^(青铜|白银|黄金|白金|钻石|大师|宗师|英杰)(\d)?$/);
+  if (!match) return 1500;
+  const tier = match[1] as string;
+  const sub = match[2] ? parseInt(match[2], 10) : 3; // 默认给个中间分段3
+  const baseScore = tiers[tier] || 1500;
+  // 5是最低，1是最高，所以 (5 - sub) * 100
+  return baseScore + (5 - sub) * 100;
+};
+
+// 获取玩家在某个特定职责的分数
+const getPlayerScore = (player: any, role: string): number => {
+  if (player.selfRanks && player.selfRanks[role] && player.selfRanks[role] !== '未定级') {
+    return rankToScore(player.selfRanks[role]);
+  }
+  // 如果没有该职责分，计算已定级位置的平均分
+  const scores = Object.values(player.selfRanks || {})
+    .filter((s: any) => s && s !== '未定级')
+    .map((s: any) => rankToScore(s));
+  return scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 1500;
+};
+
 // 1. 创建一组空队伍（两个队）
 router.post('/group', authMiddleware, async (req: Request, res: Response) => {
   const periodId = getPeriodId();
@@ -47,9 +81,10 @@ router.delete('/group/:groupId', authMiddleware, async (req: Request, res: Respo
   }
 });
 
-// 3. 自动填充一组队伍（基于 1重装 2输出 2支援 的职责要求）
+// 3. 自动填充一组队伍（基于 1重装 2输出 2支援 的职责要求，并加入群号过滤和蛇形均衡分组）
 router.post('/group/:groupId/autofill', authMiddleware, async (req: Request, res: Response) => {
   const { groupId } = req.params;
+  const { wechatGroup } = req.body;
   const periodId = getPeriodId();
 
   try {
@@ -59,7 +94,7 @@ router.post('/group/:groupId/autofill', authMiddleware, async (req: Request, res
     }
     const teams = teamsRes.rows;
 
-    const regRes = await pool.query('SELECT id, battle_tag, primary_roles, secondary_roles FROM registrations WHERE period_id = $1', [periodId]);
+    const regRes = await pool.query('SELECT id, battle_tag, primary_roles, secondary_roles, self_ranks, wechat_group FROM registrations WHERE period_id = $1', [periodId]);
     
     // 只从有效的分组队伍中统计已分配的玩家，保持与前端未分配池逻辑一致
     const allTeamsRes = await pool.query('SELECT members FROM teams WHERE period_id = $1 AND group_id IS NOT NULL', [periodId]);
@@ -75,16 +110,21 @@ router.post('/group/:groupId/autofill', authMiddleware, async (req: Request, res
       });
     });
 
-    const unassigned = regRes.rows
+    let unassigned = regRes.rows
       .filter(r => !assignedGameIds.has(r.battle_tag))
+      .filter(r => !wechatGroup || r.wechat_group === wechatGroup) // 根据群号过滤
       .map(r => {
         let primaryRoles = r.primary_roles;
         let secondaryRoles = r.secondary_roles;
+        let selfRanks = r.self_ranks;
         if (typeof primaryRoles === 'string') {
           try { primaryRoles = JSON.parse(primaryRoles); } catch (e) { primaryRoles = []; }
         }
         if (typeof secondaryRoles === 'string') {
           try { secondaryRoles = JSON.parse(secondaryRoles); } catch (e) { secondaryRoles = []; }
+        }
+        if (typeof selfRanks === 'string') {
+          try { selfRanks = JSON.parse(selfRanks); } catch (e) { selfRanks = {}; }
         }
         primaryRoles = primaryRoles || [];
         secondaryRoles = secondaryRoles || [];
@@ -97,50 +137,94 @@ router.post('/group/:groupId/autofill', authMiddleware, async (req: Request, res
           nickname: r.battle_tag.split('#')[0],
           gameId: r.battle_tag,
           roles: roles,
-          score: 0
+          selfRanks: selfRanks || {},
+          score: 0 // 占位，实际在分配时根据职责计算
         };
       });
 
     const REQUIRED_ROLES = { tank: 1, damage: 2, support: 2 };
-
-    for (const team of teams) {
-      let members = team.members;
-      if (typeof members === 'string') {
-        try { members = JSON.parse(members); } catch (e) { members = []; }
+    
+    const teamA = teams[0];
+    const teamB = teams[1];
+    
+    const parseMembers = (membersStr: any) => {
+      if (typeof membersStr === 'string') {
+        try { return JSON.parse(membersStr) || []; } catch (e) { return []; }
       }
-      members = members || [];
-      const currentCounts = { tank: 0, damage: 0, support: 0 };
-      
-      members.forEach((m: any) => {
-        if (m.assignedRole && currentCounts[m.assignedRole as keyof typeof currentCounts] !== undefined) {
-          currentCounts[m.assignedRole as keyof typeof currentCounts]++;
-        }
-      });
+      return membersStr || [];
+    };
 
-      for (const [role, maxCount] of Object.entries(REQUIRED_ROLES)) {
-        while (currentCounts[role as keyof typeof currentCounts] < maxCount) {
-          const playerIdx = unassigned.findIndex(p => p.roles.includes(role));
-          if (playerIdx > -1) {
-            const p = unassigned.splice(playerIdx, 1)[0];
-            if (p) {
-              members.push({
-                id: p.id,
-                nickname: p.nickname,
-                gameId: p.gameId,
-                roles: p.roles,
-                assignedRole: role,
-                score: p.score
-              });
-              currentCounts[role as keyof typeof currentCounts]++;
-            }
+    let membersA = parseMembers(teamA.members);
+    let membersB = parseMembers(teamB.members);
+
+    const getCountsAndScore = (members: any[]) => {
+      const counts = { tank: 0, damage: 0, support: 0 };
+      let totalScore = 0;
+      members.forEach(m => {
+        if (m.assignedRole && counts[m.assignedRole as keyof typeof counts] !== undefined) {
+          counts[m.assignedRole as keyof typeof counts]++;
+        }
+        totalScore += (m.score || 0);
+      });
+      return { counts, totalScore };
+    };
+
+    let { counts: countsA, totalScore: scoreA } = getCountsAndScore(membersA);
+    let { counts: countsB, totalScore: scoreB } = getCountsAndScore(membersB);
+
+    // 按特定职责顺序分配，避免某个稀缺职责被其他位置抢走
+    const roleOrder = ['tank', 'support', 'damage'];
+
+    for (const role of roleOrder) {
+      let missingA = REQUIRED_ROLES[role as keyof typeof REQUIRED_ROLES] - countsA[role as keyof typeof countsA];
+      let missingB = REQUIRED_ROLES[role as keyof typeof REQUIRED_ROLES] - countsB[role as keyof typeof countsB];
+      let totalMissing = Math.max(0, missingA) + Math.max(0, missingB);
+
+      if (totalMissing <= 0) continue;
+
+      let candidates = unassigned.filter(p => p.roles.includes(role));
+      candidates.sort((a, b) => getPlayerScore(b, role) - getPlayerScore(a, role));
+
+      let selected = candidates.slice(0, totalMissing);
+      const selectedIds = new Set(selected.map(p => p.id));
+      unassigned = unassigned.filter(p => !selectedIds.has(p.id));
+
+      for (const p of selected) {
+        const pScore = getPlayerScore(p, role);
+        const pMember = {
+          id: p.id,
+          nickname: p.nickname,
+          gameId: p.gameId,
+          roles: p.roles,
+          assignedRole: role,
+          score: pScore
+        };
+
+        if (missingA > 0 && missingB <= 0) {
+          membersA.push(pMember);
+          scoreA += pScore;
+          missingA--;
+        } else if (missingB > 0 && missingA <= 0) {
+          membersB.push(pMember);
+          scoreB += pScore;
+          missingB--;
+        } else if (missingA > 0 && missingB > 0) {
+          // 蛇形分配：分配给总分较低的队伍
+          if (scoreA <= scoreB) {
+            membersA.push(pMember);
+            scoreA += pScore;
+            missingA--;
           } else {
-            break;
+            membersB.push(pMember);
+            scoreB += pScore;
+            missingB--;
           }
         }
       }
-
-      await pool.query('UPDATE teams SET members = $1 WHERE id = $2', [JSON.stringify(members), team.id]);
     }
+
+    await pool.query('UPDATE teams SET members = $1 WHERE id = $2', [JSON.stringify(membersA), teamA.id]);
+    await pool.query('UPDATE teams SET members = $1 WHERE id = $2', [JSON.stringify(membersB), teamB.id]);
 
     return res.status(200).json({ success: true, code: 200, message: '自动填充完成', data: null });
   } catch (error) {
