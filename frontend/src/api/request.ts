@@ -10,9 +10,15 @@ const request: AxiosInstance = axios.create({
 request.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const token = localStorage.getItem('token');
-    if (token && config.headers) {
+    if (!config.headers) {
+      config.headers = {} as any;
+    }
+    if (token) {
       config.headers['Authorization'] = `Bearer ${token}`;
     }
+    // 注入多租户 ID
+    const tenantId = import.meta.env.VITE_TENANT_ID || 'default';
+    config.headers['X-Tenant-Id'] = tenantId;
     return config;
   },
   (error) => {

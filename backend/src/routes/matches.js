@@ -7,13 +7,14 @@ const express_1 = require("express");
 const db_1 = __importDefault(require("../config/db"));
 const auth_1 = require("../middlewares/auth");
 const registration_1 = require("./registration");
+const redis_1 = __importDefault(require("../config/redis"));
 const router = (0, express_1.Router)();
 // 生成赛程
 router.post('/generate', auth_1.authMiddleware, async (req, res) => {
     const periodId = (0, registration_1.getPeriodId)();
     try {
         // 1. 获取当前周期的所有分组队伍
-        const teamsResult = await db_1.default.query('SELECT id, name, group_id FROM teams WHERE period_id = $1 AND group_id IS NOT NULL', [periodId]);
+        const teamsResult = await db_1.default.query('SELECT id, name, group_id FROM teams WHERE period_id = $1 AND group_id IS NOT NULL AND tenant_id = $2', [periodId, req.tenantId]);
         const teams = teamsResult.rows;
         if (teams.length < 2) {
             const response = {
@@ -32,7 +33,7 @@ router.post('/generate', auth_1.authMiddleware, async (req, res) => {
             groupsMap.get(t.group_id)?.push(t);
         });
         // 清空当前周期原有的旧赛程，防止重复生成
-        await db_1.default.query('DELETE FROM matches WHERE period_id = $1', [periodId]);
+        await db_1.default.query('DELETE FROM matches WHERE period_id = $1 AND tenant_id = $2', [periodId, req.tenantId]);
         const matches = [];
         // 在每个对战组内部两两生成对局
         for (const [groupId, groupTeams] of groupsMap.entries()) {
@@ -40,11 +41,12 @@ router.post('/generate', auth_1.authMiddleware, async (req, res) => {
                 for (let j = i + 1; j < groupTeams.length; j++) {
                     const teamA = groupTeams[i];
                     const teamB = groupTeams[j];
-                    await db_1.default.query('INSERT INTO matches (period_id, team1_id, team2_id, status, match_order, created_at) VALUES ($1, $2, $3, $4, $5, NOW())', [periodId, teamA.id, teamB.id, 'pending', matches.length + 1]);
+                    await db_1.default.query('INSERT INTO matches (period_id, tenant_id, team1_id, team2_id, status, match_order, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())', [periodId, req.tenantId, teamA.id, teamB.id, 'pending', matches.length + 1]);
                     matches.push({ teamA, teamB });
                 }
             }
         }
+        redis_1.default.del(`board:matches:${req.tenantId}:${periodId}`).catch(() => { });
         const response = {
             success: true,
             code: 200,
@@ -68,7 +70,8 @@ router.post('/generate', auth_1.authMiddleware, async (req, res) => {
 router.delete('/clear', auth_1.authMiddleware, async (req, res) => {
     const periodId = (0, registration_1.getPeriodId)();
     try {
-        await db_1.default.query('DELETE FROM matches WHERE period_id = $1', [periodId]);
+        await db_1.default.query('DELETE FROM matches WHERE period_id = $1 AND tenant_id = $2', [periodId, req.tenantId]);
+        redis_1.default.del(`board:matches:${req.tenantId}:${periodId}`).catch(() => { });
         return res.status(200).json({ success: true, code: 200, message: '赛程清空成功', data: null });
     }
     catch (error) {
@@ -87,10 +90,11 @@ router.post('/update', auth_1.authMiddleware, async (req, res) => {
         await db_1.default.query('BEGIN');
         for (const match of matches) {
             if (match.id !== undefined) {
-                await db_1.default.query('UPDATE matches SET status = $1, match_order = $2 WHERE id = $3', [match.status, match.matchOrder, match.id]);
+                await db_1.default.query('UPDATE matches SET status = $1, match_order = $2 WHERE id = $3 AND tenant_id = $4', [match.status, match.matchOrder, match.id, req.tenantId]);
             }
         }
         await db_1.default.query('COMMIT');
+        redis_1.default.del(`board:matches:${req.tenantId}:${(0, registration_1.getPeriodId)()}`).catch(() => { });
         return res.status(200).json({ success: true, code: 200, message: '赛程更新成功', data: null });
     }
     catch (error) {
@@ -112,7 +116,8 @@ router.post('/score', auth_1.authMiddleware, async (req, res) => {
         return res.status(400).json(response);
     }
     try {
-        await db_1.default.query('UPDATE matches SET score1 = $1, score2 = $2, status = $3 WHERE id = $4', [scoreA, scoreB, 'completed', matchId]);
+        await db_1.default.query('UPDATE matches SET score1 = $1, score2 = $2, status = $3 WHERE id = $4 AND tenant_id = $5', [scoreA, scoreB, 'completed', matchId, req.tenantId]);
+        redis_1.default.del(`board:matches:${req.tenantId}:${(0, registration_1.getPeriodId)()}`).catch(() => { });
         const response = {
             success: true,
             code: 200,

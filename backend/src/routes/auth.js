@@ -8,14 +8,31 @@ const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const router = (0, express_1.Router)();
 router.post('/login', (req, res) => {
     const { username, password } = req.body;
-    const adminUsername = process.env.ADMIN_USERNAME;
-    const adminPassword = process.env.ADMIN_PASSWORD;
+    const tenantId = req.tenantId || 'default';
+    const adminUsername = process.env.ADMIN_USERNAME || 'admin';
+    const adminPasswordsStr = process.env.ADMIN_PASSWORDS || '{}';
     const secret = process.env.JWT_SECRET;
-    if (!adminUsername || !adminPassword) {
+    let adminPasswords = {};
+    try {
+        adminPasswords = JSON.parse(adminPasswordsStr);
+    }
+    catch (e) {
+        console.error('Failed to parse ADMIN_PASSWORDS from .env', e);
         const response = {
             success: false,
             code: 500,
-            message: '管理员账号未配置，请在后端环境变量中设置 ADMIN_USERNAME 与 ADMIN_PASSWORD',
+            message: '管理员密码配置格式错误，必须为合法的 JSON 字符串',
+            data: null
+        };
+        return res.status(500).json(response);
+    }
+    // 获取当前社区对应的密码，如果没有单独设置则使用 default 密码
+    const tenantPassword = adminPasswords[tenantId] || adminPasswords['default'];
+    if (!tenantPassword) {
+        const response = {
+            success: false,
+            code: 500,
+            message: '管理员密码未配置，请在后端环境变量中设置 ADMIN_PASSWORDS',
             data: null
         };
         return res.status(500).json(response);
@@ -29,8 +46,9 @@ router.post('/login', (req, res) => {
         };
         return res.status(500).json(response);
     }
-    if (username === adminUsername && password === adminPassword) {
-        const token = jsonwebtoken_1.default.sign({ username, role: 'admin' }, secret, { expiresIn: '24h' });
+    if (username === adminUsername && password === tenantPassword) {
+        // 将 tenantId 也签入 Token，增强安全性
+        const token = jsonwebtoken_1.default.sign({ username, role: 'admin', tenantId }, secret, { expiresIn: '24h' });
         const response = {
             success: true,
             code: 200,

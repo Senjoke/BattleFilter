@@ -7,6 +7,7 @@ const express_1 = require("express");
 const db_1 = __importDefault(require("../config/db"));
 const auth_1 = require("../middlewares/auth");
 const registration_1 = require("./registration");
+const redis_1 = __importDefault(require("../config/redis"));
 const router = (0, express_1.Router)();
 // 段位转换分数工具函数
 const rankToScore = (rankStr) => {
@@ -48,8 +49,9 @@ router.post('/group', auth_1.authMiddleware, async (req, res) => {
     const groupId = `group-${Date.now()}`;
     const version = `v1.0-${Date.now()}`;
     try {
-        const t1 = await db_1.default.query('INSERT INTO teams (period_id, group_id, name, version, members, created_at) VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING id, name, group_id, members', [periodId, groupId, '队伍 A', version, '[]']);
-        const t2 = await db_1.default.query('INSERT INTO teams (period_id, group_id, name, version, members, created_at) VALUES ($1, $2, $3, $4, $5, NOW()) RETURNING id, name, group_id, members', [periodId, groupId, '队伍 B', version, '[]']);
+        const t1 = await db_1.default.query('INSERT INTO teams (period_id, tenant_id, group_id, name, version, members, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING id, name, group_id, members', [periodId, req.tenantId, groupId, '队伍 A', version, '[]']);
+        const t2 = await db_1.default.query('INSERT INTO teams (period_id, tenant_id, group_id, name, version, members, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW()) RETURNING id, name, group_id, members', [periodId, req.tenantId, groupId, '队伍 B', version, '[]']);
+        redis_1.default.del(`board:teams:${req.tenantId}:${periodId}`).catch(() => { });
         return res.status(200).json({ success: true, code: 200, message: '队伍组创建成功', data: { groupId, teams: [t1.rows[0], t2.rows[0]] } });
     }
     catch (error) {
@@ -64,10 +66,13 @@ router.delete('/group/:groupId', auth_1.authMiddleware, async (req, res) => {
         // 级联删除相关的赛程
         await db_1.default.query(`
       DELETE FROM matches 
-      WHERE team1_id IN (SELECT id FROM teams WHERE group_id = $1)
-         OR team2_id IN (SELECT id FROM teams WHERE group_id = $1)
-    `, [groupId]);
-        await db_1.default.query('DELETE FROM teams WHERE group_id = $1', [groupId]);
+      WHERE (team1_id IN (SELECT id FROM teams WHERE group_id = $1 AND tenant_id = $2)
+         OR team2_id IN (SELECT id FROM teams WHERE group_id = $1 AND tenant_id = $2))
+         AND tenant_id = $2
+    `, [groupId, req.tenantId]);
+        await db_1.default.query('DELETE FROM teams WHERE group_id = $1 AND tenant_id = $2', [groupId, req.tenantId]);
+        redis_1.default.del(`board:teams:${req.tenantId}:${(0, registration_1.getPeriodId)()}`).catch(() => { });
+        redis_1.default.del(`board:matches:${req.tenantId}:${(0, registration_1.getPeriodId)()}`).catch(() => { });
         return res.status(200).json({ success: true, code: 200, message: '队伍组删除成功', data: null });
     }
     catch (error) {
@@ -81,14 +86,14 @@ router.post('/group/:groupId/autofill', auth_1.authMiddleware, async (req, res) 
     const { wechatGroup } = req.body;
     const periodId = (0, registration_1.getPeriodId)();
     try {
-        const teamsRes = await db_1.default.query('SELECT * FROM teams WHERE group_id = $1 ORDER BY id ASC', [groupId]);
+        const teamsRes = await db_1.default.query('SELECT * FROM teams WHERE group_id = $1 AND tenant_id = $2 ORDER BY id ASC', [groupId, req.tenantId]);
         if (teamsRes.rows.length !== 2) {
             return res.status(400).json({ success: false, code: 400, message: '无效的队伍组', data: null });
         }
         const teams = teamsRes.rows;
-        const regRes = await db_1.default.query('SELECT id, battle_tag, primary_roles, secondary_roles, self_ranks, wechat_group FROM registrations WHERE period_id = $1', [periodId]);
+        const regRes = await db_1.default.query('SELECT id, battle_tag, primary_roles, secondary_roles, self_ranks, wechat_group FROM registrations WHERE period_id = $1 AND tenant_id = $2', [periodId, req.tenantId]);
         // 只从有效的分组队伍中统计已分配的玩家，保持与前端未分配池逻辑一致
-        const allTeamsRes = await db_1.default.query('SELECT members FROM teams WHERE period_id = $1 AND group_id IS NOT NULL', [periodId]);
+        const allTeamsRes = await db_1.default.query('SELECT members FROM teams WHERE period_id = $1 AND group_id IS NOT NULL AND tenant_id = $2', [periodId, req.tenantId]);
         const assignedGameIds = new Set();
         allTeamsRes.rows.forEach(t => {
             let members = t.members;
@@ -227,8 +232,9 @@ router.post('/group/:groupId/autofill', auth_1.authMiddleware, async (req, res) 
                 }
             }
         }
-        await db_1.default.query('UPDATE teams SET members = $1 WHERE id = $2', [JSON.stringify(membersA), teamA.id]);
-        await db_1.default.query('UPDATE teams SET members = $1 WHERE id = $2', [JSON.stringify(membersB), teamB.id]);
+        await db_1.default.query('UPDATE teams SET members = $1 WHERE id = $2 AND tenant_id = $3', [JSON.stringify(membersA), teamA.id, req.tenantId]);
+        await db_1.default.query('UPDATE teams SET members = $1 WHERE id = $2 AND tenant_id = $3', [JSON.stringify(membersB), teamB.id, req.tenantId]);
+        redis_1.default.del(`board:teams:${req.tenantId}:${periodId}`).catch(() => { });
         return res.status(200).json({ success: true, code: 200, message: '自动填充完成', data: null });
     }
     catch (error) {
@@ -245,11 +251,12 @@ router.post('/edit', auth_1.authMiddleware, async (req, res) => {
     const membersData = members || [];
     try {
         if (name) {
-            await db_1.default.query('UPDATE teams SET members = $1, name = $2 WHERE id = $3', [JSON.stringify(membersData), name, teamId]);
+            await db_1.default.query('UPDATE teams SET members = $1, name = $2 WHERE id = $3 AND tenant_id = $4', [JSON.stringify(membersData), name, teamId, req.tenantId]);
         }
         else {
-            await db_1.default.query('UPDATE teams SET members = $1 WHERE id = $2', [JSON.stringify(membersData), teamId]);
+            await db_1.default.query('UPDATE teams SET members = $1 WHERE id = $2 AND tenant_id = $3', [JSON.stringify(membersData), teamId, req.tenantId]);
         }
+        redis_1.default.del(`board:teams:${req.tenantId}:${(0, registration_1.getPeriodId)()}`).catch(() => { });
         return res.status(200).json({ success: true, code: 200, message: '队伍更新成功', data: null });
     }
     catch (error) {

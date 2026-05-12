@@ -12,10 +12,15 @@ const teams_1 = __importDefault(require("./routes/teams"));
 const matches_1 = __importDefault(require("./routes/matches"));
 const board_1 = __importDefault(require("./routes/board"));
 const announcements_1 = __importDefault(require("./routes/announcements"));
+const metrics_1 = __importDefault(require("./routes/metrics"));
+const tenant_1 = require("./middlewares/tenant");
+const metrics_2 = require("./middlewares/metrics");
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 app.use((0, cors_1.default)());
 app.use(express_1.default.json());
+app.use(tenant_1.tenantMiddleware);
+app.use(metrics_2.metricsMiddleware);
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', message: 'BattleFilter API is running' });
 });
@@ -32,5 +37,7 @@ app.use('/api/admin/matches', matches_1.default); // POST /api/admin/matches/gen
 app.use('/api/board', board_1.default); // GET /api/board/teams, GET /api/board/matches
 // Announcements
 app.use('/api/announcements', announcements_1.default);
+// Metrics
+app.use('/api/admin/metrics', metrics_1.default);
 exports.default = app;
 //# sourceMappingURL=app.js.map

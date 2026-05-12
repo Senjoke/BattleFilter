@@ -38,6 +38,17 @@ const authMiddleware = (req, res, next) => {
     }
     try {
         const decoded = jsonwebtoken_1.default.verify(token, secret);
+        // 多租户隔离验证：检查 token 里的 tenantId 是否与当前请求的 tenantId 匹配
+        const requestTenantId = req.tenantId || 'default';
+        if (decoded.tenantId && decoded.tenantId !== requestTenantId) {
+            const response = {
+                success: false,
+                code: 403,
+                message: '无权访问该社区的管理后台',
+                data: null
+            };
+            return res.status(403).json(response);
+        }
         req.user = decoded;
         next();
     }

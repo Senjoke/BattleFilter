@@ -8,6 +8,10 @@ import teamsRouter from './routes/teams';
 import matchesRouter from './routes/matches';
 import boardRouter from './routes/board';
 import announcementsRouter from './routes/announcements';
+import metricsRouter from './routes/metrics';
+
+import { tenantMiddleware } from './middlewares/tenant';
+import { metricsMiddleware } from './middlewares/metrics';
 
 dotenv.config();
 
@@ -15,6 +19,9 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+app.use(tenantMiddleware);
+app.use(metricsMiddleware);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'BattleFilter API is running' });
@@ -38,5 +45,8 @@ app.use('/api/board', boardRouter); // GET /api/board/teams, GET /api/board/matc
 
 // Announcements
 app.use('/api/announcements', announcementsRouter);
+
+// Metrics
+app.use('/api/admin/metrics', metricsRouter);
 
 export default app;

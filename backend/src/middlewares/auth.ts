@@ -39,7 +39,20 @@ export const authMiddleware = (req: Request, res: Response, next: NextFunction) 
     }
     
     try {
-      const decoded = jwt.verify(token, secret);
+      const decoded = jwt.verify(token, secret) as any;
+      
+      // 多租户隔离验证：检查 token 里的 tenantId 是否与当前请求的 tenantId 匹配
+      const requestTenantId = req.tenantId || 'default';
+      if (decoded.tenantId && decoded.tenantId !== requestTenantId) {
+        const response: ApiResponse = {
+          success: false,
+          code: 403,
+          message: '无权访问该社区的管理后台',
+          data: null
+        };
+        return res.status(403).json(response);
+      }
+
       (req as any).user = decoded;
       next();
     } catch (error) {

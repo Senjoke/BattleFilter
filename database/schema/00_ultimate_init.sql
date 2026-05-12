@@ -13,6 +13,7 @@ DROP TABLE IF EXISTS announcements CASCADE;
 -- 1. 报名表
 CREATE TABLE registrations (
   id SERIAL PRIMARY KEY,
+  tenant_id VARCHAR(50) DEFAULT 'default' NOT NULL,
   battle_tag VARCHAR(255) NOT NULL,
   wechat_id VARCHAR(255) NOT NULL,
   wechat_group VARCHAR(50) NOT NULL,
@@ -22,8 +23,8 @@ CREATE TABLE registrations (
   queried_ranks JSONB,
   period_id VARCHAR(50) NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(battle_tag, period_id),
-  UNIQUE(wechat_id, period_id)
+  UNIQUE(battle_tag, period_id, tenant_id),
+  UNIQUE(wechat_id, period_id, tenant_id)
 );
 
 -- 2. 玩家战绩快照表
@@ -40,6 +41,7 @@ CREATE TABLE player_stats (
 -- 包含最新字段 group_id 及 members 默认值
 CREATE TABLE teams (
   id SERIAL PRIMARY KEY,
+  tenant_id VARCHAR(50) DEFAULT 'default' NOT NULL,
   period_id VARCHAR(50) NOT NULL,
   group_id VARCHAR(100),
   name VARCHAR(100) NOT NULL,
@@ -52,6 +54,7 @@ CREATE TABLE teams (
 -- 包含最新字段 match_order, score1, score2
 CREATE TABLE matches (
   id SERIAL PRIMARY KEY,
+  tenant_id VARCHAR(50) DEFAULT 'default' NOT NULL,
   period_id VARCHAR(50) NOT NULL,
   team1_id INTEGER REFERENCES teams(id) ON DELETE CASCADE,
   team2_id INTEGER REFERENCES teams(id) ON DELETE CASCADE,
@@ -65,13 +68,24 @@ CREATE TABLE matches (
 -- 5. 赛事公告表
 CREATE TABLE announcements (
   id SERIAL PRIMARY KEY,
+  tenant_id VARCHAR(50) DEFAULT 'default' NOT NULL,
   title TEXT,
   content TEXT,
   start_time TIMESTAMP WITH TIME ZONE,
   period_id VARCHAR(50) NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE (period_id)
+  UNIQUE (period_id, tenant_id)
+);
+
+-- 6. 访问日志表
+CREATE TABLE access_logs (
+  id SERIAL PRIMARY KEY,
+  tenant_id VARCHAR(50) NOT NULL DEFAULT 'default',
+  path VARCHAR(255) NOT NULL,
+  ip VARCHAR(100),
+  user_agent TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 COMMIT;

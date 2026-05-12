@@ -15,5 +15,15 @@ services:
       - ./database/schema:/docker-entrypoint-initdb.d
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    container_name: battlefilter-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  redisdata:

@@ -1,22 +1,37 @@
 import { Router, Request, Response } from 'express';
 import pool from '../config/db';
+import redis from '../config/redis';
 import { authMiddleware } from '../middlewares/auth';
 import { ApiResponse } from '../../../shared/types';
 
 const router = Router();
 
-let isRegistrationOpen = true;
-
 // 获取报名通道状态 (公开)
-router.get('/registrations/status', (req: Request, res: Response) => {
-  res.json({ success: true, code: 200, message: '获取状态成功', data: { isOpen: isRegistrationOpen } });
+router.get('/registrations/status', async (req: Request, res: Response) => {
+  const tenantId = req.tenantId || 'default';
+  let isOpen = true;
+  try {
+    const status = await redis.get(`registration:status:${tenantId}`);
+    if (status === 'false') {
+      isOpen = false;
+    }
+  } catch (error) {
+    console.error('Redis get registration status error:', error);
+  }
+  res.json({ success: true, code: 200, message: '获取状态成功', data: { isOpen } });
 });
 
 // 管理员设置报名通道状态
-router.post('/admin/registrations/status', authMiddleware, (req: Request, res: Response) => {
+router.post('/admin/registrations/status', authMiddleware, async (req: Request, res: Response) => {
+  const tenantId = req.tenantId || 'default';
   if (typeof req.body.isOpen === 'boolean') {
-    isRegistrationOpen = req.body.isOpen;
-    res.json({ success: true, code: 200, message: '报名通道状态更新成功', data: { isOpen: isRegistrationOpen } });
+    try {
+      await redis.set(`registration:status:${tenantId}`, req.body.isOpen ? 'true' : 'false');
+      res.json({ success: true, code: 200, message: '报名通道状态更新成功', data: { isOpen: req.body.isOpen } });
+    } catch (error) {
+      console.error('Redis set registration status error:', error);
+      res.status(500).json({ success: false, code: 500, message: '状态保存失败', data: null });
+    }
   } else {
     res.status(400).json({ success: false, code: 400, message: '无效的参数', data: null });
   }
@@ -33,7 +48,19 @@ export const getPeriodId = (): string => {
 
 // C端: POST /api/registrations
 router.post('/registrations', async (req: Request, res: Response) => {
-  if (!isRegistrationOpen) {
+  const tenantId = req.tenantId || 'default';
+  
+  let isOpen = true;
+  try {
+    const status = await redis.get(`registration:status:${tenantId}`);
+    if (status === 'false') {
+      isOpen = false;
+    }
+  } catch (error) {
+    console.error('Redis get registration status error:', error);
+  }
+  
+  if (!isOpen) {
     const response: ApiResponse = {
       success: false,
       code: 403,
@@ -84,8 +111,8 @@ router.post('/registrations', async (req: Request, res: Response) => {
 
   try {
     const checkResult = await pool.query(
-      'SELECT id FROM registrations WHERE (battle_tag = $1 OR wechat_id = $2) AND period_id = $3',
-      [battleTag, wechatId, periodId]
+      'SELECT id FROM registrations WHERE (battle_tag = $1 OR wechat_id = $2) AND period_id = $3 AND tenant_id = $4',
+      [battleTag, wechatId, periodId, req.tenantId]
     );
 
     if (checkResult.rows.length > 0) {
@@ -99,8 +126,8 @@ router.post('/registrations', async (req: Request, res: Response) => {
     }
 
     await pool.query(
-      'INSERT INTO registrations (battle_tag, wechat_id, wechat_group, primary_roles, secondary_roles, self_ranks, period_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())',
-      [battleTag, wechatId, wechatGroup, JSON.stringify(primaryRoles), JSON.stringify(secondaryRoles || []), JSON.stringify(selfRanks || {}), periodId]
+      'INSERT INTO registrations (battle_tag, wechat_id, wechat_group, primary_roles, secondary_roles, self_ranks, period_id, tenant_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())',
+      [battleTag, wechatId, wechatGroup, JSON.stringify(primaryRoles), JSON.stringify(secondaryRoles || []), JSON.stringify(selfRanks || {}), periodId, req.tenantId]
     );
 
     const response: ApiResponse = {
@@ -128,8 +155,8 @@ router.get('/admin/registrations', authMiddleware, async (req: Request, res: Res
 
   try {
     const result = await pool.query(
-      'SELECT id, battle_tag as "battleTag", wechat_id as "wechatId", wechat_group as "wechatGroup", primary_roles as "primaryRoles", secondary_roles as "secondaryRoles", self_ranks as "selfRanks", queried_ranks as "queriedRanks", period_id as "periodId", created_at as "createdAt" FROM registrations WHERE period_id = $1 ORDER BY created_at DESC',
-      [periodId]
+      'SELECT id, battle_tag as "battleTag", wechat_id as "wechatId", wechat_group as "wechatGroup", primary_roles as "primaryRoles", secondary_roles as "secondaryRoles", self_ranks as "selfRanks", queried_ranks as "queriedRanks", period_id as "periodId", created_at as "createdAt" FROM registrations WHERE period_id = $1 AND tenant_id = $2 ORDER BY created_at DESC',
+      [periodId, req.tenantId]
     );
 
     const response: ApiResponse = {
@@ -161,7 +188,7 @@ router.delete('/admin/registrations/:id', authMiddleware, async (req: Request, r
   }
 
   try {
-    await pool.query('DELETE FROM registrations WHERE id = $1', [id]);
+    await pool.query('DELETE FROM registrations WHERE id = $1 AND tenant_id = $2', [id, req.tenantId]);
     return res.status(200).json({ success: true, code: 200, message: '删除报名信息成功', data: null });
   } catch (error) {
     console.error('Delete registration error:', error);
@@ -175,7 +202,7 @@ router.delete('/admin/registrations/clear', authMiddleware, async (req: Request,
   try {
     // 级联清空队伍中的未分配队员，不过由于队伍和报名表是弱关联（靠 gameId 关联），
     // 并且系统是整体性的，一般清空报名列表代表重新开始。
-    await pool.query('DELETE FROM registrations WHERE period_id = $1', [periodId]);
+    await pool.query('DELETE FROM registrations WHERE period_id = $1 AND tenant_id = $2', [periodId, req.tenantId]);
     return res.status(200).json({ success: true, code: 200, message: '清空报名信息成功', data: null });
   } catch (error) {
     console.error('Clear registrations error:', error);
