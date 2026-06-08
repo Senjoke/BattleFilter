@@ -4,6 +4,7 @@ import { Shield, Swords, Heart, CheckCircle2, Megaphone } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import request from '../api/request'
 import { onMounted } from 'vue'
+import SponsorFooter from '../components/SponsorFooter.vue'
 
 const router = useRouter()
 const battlenetId = ref('')
@@ -19,6 +20,12 @@ const selfRanks = ref({
 const isSubmitted = ref(false)
 const announcement = ref<any>(null)
 const isRegistrationOpen = ref(true)
+
+const footerData = ref({
+  donators: [],
+  operators: [],
+  adminContacts: []
+})
 
 const rankTiers = ['青铜', '白银', '黄金', '白金', '钻石', '大师', '宗师', '英杰']
 const rankOptions = rankTiers.flatMap(tier => [5, 4, 3, 2, 1].map(div => `${tier}${div}`))
@@ -40,6 +47,15 @@ onMounted(async () => {
     }
   } catch (error) {
     console.error('获取公告失败', error)
+  }
+
+  try {
+    const res: any = await request.get('/footer')
+    if (res.success && res.data) {
+      footerData.value = res.data
+    }
+  } catch (error) {
+    console.error('获取页脚数据失败', error)
   }
 })
 
@@ -73,10 +89,10 @@ const toggleSecondaryRole = (roleId: string) => {
 
 const validateNickname = (name: string) => {
   // 规则：
-  // 1. 2-8个中文字或3-12个英文字母，允许数字但不能开头
+  // 1. 2-12个字符(支持各国语言字母及生僻字，允许数字但不以数字开头)
   // 2. 一个井号
   // 3. 4-6位数字编码
-  const regex = /^(?:[\u4e00-\u9fa5][\u4e00-\u9fa50-9]{1,7}|[a-zA-Z][a-zA-Z0-9]{2,11})#[0-9]{4,6}$/
+  const regex = /^[\p{L}\p{M}][\p{L}\p{M}\p{N}]{1,11}#[0-9]{4,6}$/u
   return regex.test(name)
 }
 
@@ -89,7 +105,7 @@ const handleFormSubmit = () => {
   if (!battlenetId.value || !wechatId.value || primaryRoles.value.length === 0) return
   
   if (!validateNickname(battlenetId.value)) {
-    alert('昵称格式不正确：\n1. 第一部分为2-8个中文字或3-12个英文字，可混合大小写允许包含数字但不得以数字开头\n2. 第二部分为一个井号(#)\n3. 第三部分为4-6位数字编码')
+    alert('昵称格式不正确：\n1. 第一部分为2-12个字符(支持各国语言，可包含数字但不以数字开头)\n2. 第二部分为一个井号(#)\n3. 第三部分为4-6位数字编码')
     return
   }
   
@@ -335,5 +351,12 @@ const submitRegistration = async () => {
         </div>
       </div>
     </div>
+
+    <!-- Footer -->
+    <SponsorFooter 
+      :donators="footerData.donators" 
+      :operators="footerData.operators" 
+      :adminContacts="footerData.adminContacts" 
+    />
   </div>
 </template>

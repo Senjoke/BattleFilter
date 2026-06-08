@@ -37,15 +37,6 @@ router.post('/admin/registrations/status', authMiddleware, async (req: Request, 
   }
 });
 
-export const getPeriodId = (): string => {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), 0, 1);
-  const diff = now.getTime() - start.getTime();
-  const oneWeek = 1000 * 60 * 60 * 24 * 7;
-  const week = Math.ceil(diff / oneWeek);
-  return `${now.getFullYear()}-W${week}`;
-};
-
 // C端: POST /api/registrations
 router.post('/registrations', async (req: Request, res: Response) => {
   const tenantId = req.tenantId || 'default';
@@ -82,7 +73,7 @@ router.post('/registrations', async (req: Request, res: Response) => {
     return res.status(400).json(response);
   }
 
-  const periodId = getPeriodId();
+  const periodId = 'global';
   
   // 验证战网昵称格式 (例如：网易#1234)
   const tagParts = battleTag.split('#');
@@ -97,29 +88,29 @@ router.post('/registrations', async (req: Request, res: Response) => {
   
   const nickname = tagParts[0];
   const suffix = tagParts[1];
-  const nicknameRegex = /^([\u4e00-\u9fa5][\u4e00-\u9fa50-9]{1,7}|[a-zA-Z][a-zA-Z0-9]{2,11})$/;
+  const nicknameRegex = /^[\p{L}\p{M}][\p{L}\p{M}\p{N}]{1,11}$/u;
   const suffixRegex = /^\d{4,6}$/;
   
   if (!nicknameRegex.test(nickname) || !suffixRegex.test(suffix)) {
     return res.status(400).json({
       success: false,
       code: 400,
-      message: '战网昵称不符合规范：第一部分为2-8个中文字或3-12个英文字母(可含数字不以数字开头)；后缀为4-6位数字',
+      message: '战网昵称不符合规范：名字部分为2-12个字符(支持各国语言，不以数字开头)；后缀为4-6位数字',
       data: null
     });
   }
 
   try {
     const checkResult = await pool.query(
-      'SELECT id FROM registrations WHERE (battle_tag = $1 OR wechat_id = $2) AND period_id = $3 AND tenant_id = $4',
-      [battleTag, wechatId, periodId, req.tenantId]
+      'SELECT id FROM registrations WHERE (battle_tag = $1 OR wechat_id = $2) AND tenant_id = $3',
+      [battleTag, wechatId, req.tenantId]
     );
 
     if (checkResult.rows.length > 0) {
       const response: ApiResponse = {
         success: false,
         code: 409,
-        message: '当前周期战网ID或微信号已报名，请勿重复提交',
+        message: '战网ID或微信号已报名，请勿重复提交',
         data: null
       };
       return res.status(409).json(response);
@@ -129,6 +120,8 @@ router.post('/registrations', async (req: Request, res: Response) => {
       'INSERT INTO registrations (battle_tag, wechat_id, wechat_group, primary_roles, secondary_roles, self_ranks, period_id, tenant_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())',
       [battleTag, wechatId, wechatGroup, JSON.stringify(primaryRoles), JSON.stringify(secondaryRoles || []), JSON.stringify(selfRanks || {}), periodId, req.tenantId]
     );
+
+    redis.del(`board:registrations:${req.tenantId}`).catch(() => {});
 
     const response: ApiResponse = {
       success: true,
@@ -151,12 +144,10 @@ router.post('/registrations', async (req: Request, res: Response) => {
 
 // B端: GET /api/admin/registrations
 router.get('/admin/registrations', authMiddleware, async (req: Request, res: Response) => {
-  const periodId = getPeriodId();
-
   try {
     const result = await pool.query(
-      'SELECT id, battle_tag as "battleTag", wechat_id as "wechatId", wechat_group as "wechatGroup", primary_roles as "primaryRoles", secondary_roles as "secondaryRoles", self_ranks as "selfRanks", queried_ranks as "queriedRanks", period_id as "periodId", created_at as "createdAt" FROM registrations WHERE period_id = $1 AND tenant_id = $2 ORDER BY created_at DESC',
-      [periodId, req.tenantId]
+      'SELECT id, battle_tag as "battleTag", wechat_id as "wechatId", wechat_group as "wechatGroup", primary_roles as "primaryRoles", secondary_roles as "secondaryRoles", self_ranks as "selfRanks", queried_ranks as "queriedRanks", period_id as "periodId", created_at as "createdAt" FROM registrations WHERE tenant_id = $1 ORDER BY created_at DESC',
+      [req.tenantId]
     );
 
     const response: ApiResponse = {
@@ -178,34 +169,28 @@ router.get('/admin/registrations', authMiddleware, async (req: Request, res: Res
   }
 });
 
-// B端: DELETE /api/admin/registrations/:id
-router.delete('/admin/registrations/:id', authMiddleware, async (req: Request, res: Response) => {
-  const { id } = req.params;
-  
-  if (id === 'clear') {
-    // 转发给 clear 逻辑
-    return;
-  }
-
+// B端: DELETE /api/admin/registrations/clear
+router.delete('/admin/registrations/clear', authMiddleware, async (req: Request, res: Response) => {
   try {
-    await pool.query('DELETE FROM registrations WHERE id = $1 AND tenant_id = $2', [id, req.tenantId]);
-    return res.status(200).json({ success: true, code: 200, message: '删除报名信息成功', data: null });
+    await pool.query('DELETE FROM registrations WHERE tenant_id = $1', [req.tenantId]);
+    redis.del(`board:registrations:${req.tenantId}`).catch(() => {});
+    return res.status(200).json({ success: true, code: 200, message: '清空报名信息成功', data: null });
   } catch (error) {
-    console.error('Delete registration error:', error);
+    console.error('Clear registrations error:', error);
     return res.status(500).json({ success: false, code: 500, message: '服务器内部错误', data: null });
   }
 });
 
-// B端: DELETE /api/admin/registrations/clear
-router.delete('/admin/registrations/clear', authMiddleware, async (req: Request, res: Response) => {
-  const periodId = getPeriodId();
+// B端: DELETE /api/admin/registrations/:id
+router.delete('/admin/registrations/:id', authMiddleware, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  
   try {
-    // 级联清空队伍中的未分配队员，不过由于队伍和报名表是弱关联（靠 gameId 关联），
-    // 并且系统是整体性的，一般清空报名列表代表重新开始。
-    await pool.query('DELETE FROM registrations WHERE period_id = $1 AND tenant_id = $2', [periodId, req.tenantId]);
-    return res.status(200).json({ success: true, code: 200, message: '清空报名信息成功', data: null });
+    await pool.query('DELETE FROM registrations WHERE id = $1 AND tenant_id = $2', [id, req.tenantId]);
+    redis.del(`board:registrations:${req.tenantId}`).catch(() => {});
+    return res.status(200).json({ success: true, code: 200, message: '删除报名信息成功', data: null });
   } catch (error) {
-    console.error('Clear registrations error:', error);
+    console.error('Delete registration error:', error);
     return res.status(500).json({ success: false, code: 500, message: '服务器内部错误', data: null });
   }
 });

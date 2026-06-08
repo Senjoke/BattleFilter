@@ -114,6 +114,13 @@
           </div>
         </div>
       </section>
+
+      <!-- Footer -->
+      <SponsorFooter 
+        :donators="footerData.donators" 
+        :operators="footerData.operators" 
+        :adminContacts="footerData.adminContacts" 
+      />
     </div>
   </div>
 </template>
@@ -122,6 +129,7 @@
 import { ref, onMounted, computed } from 'vue';
 import { Megaphone } from 'lucide-vue-next';
 import request from '../api/request';
+import SponsorFooter from '../components/SponsorFooter.vue'
 
 // 接口定义
 interface Player {
@@ -153,6 +161,12 @@ const teams = ref<Team[]>([]);
 const schedules = ref<Match[]>([]);
 const announcement = ref<any>(null);
 const registeredPlayers = ref<any[]>([]);
+
+const footerData = ref({
+  donators: [],
+  operators: [],
+  adminContacts: []
+})
 
 const selectedGroupId = ref<string>('all');
 
@@ -215,6 +229,11 @@ const fetchBoardData = async () => {
     const regsRes: any = await request.get('/board/registrations');
     if (regsRes.success) {
       registeredPlayers.value = regsRes.data;
+    }
+
+    const footerRes: any = await request.get('/footer');
+    if (footerRes.success && footerRes.data) {
+      footerData.value = footerRes.data;
     }
   } catch (error) {
     console.error('获取看板数据失败', error);

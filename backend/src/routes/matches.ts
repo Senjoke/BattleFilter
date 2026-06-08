@@ -2,7 +2,6 @@ import { Router, Request, Response } from 'express';
 import pool from '../config/db';
 import { authMiddleware } from '../middlewares/auth';
 import { ApiResponse } from '../../../shared/types';
-import { getPeriodId } from './registration';
 
 import redis from '../config/redis';
 
@@ -10,13 +9,13 @@ const router = Router();
 
 // 生成赛程
 router.post('/generate', authMiddleware, async (req: Request, res: Response) => {
-  const periodId = getPeriodId();
+  const periodId = 'global';
 
   try {
-    // 1. 获取当前周期的所有分组队伍
+    // 1. 获取所有分组队伍
     const teamsResult = await pool.query(
-      'SELECT id, name, group_id FROM teams WHERE period_id = $1 AND group_id IS NOT NULL AND tenant_id = $2',
-      [periodId, req.tenantId]
+      'SELECT id, name, group_id FROM teams WHERE group_id IS NOT NULL AND tenant_id = $1',
+      [req.tenantId]
     );
 
     const teams = teamsResult.rows;
@@ -38,8 +37,7 @@ router.post('/generate', authMiddleware, async (req: Request, res: Response) => 
       groupsMap.get(t.group_id)?.push(t);
     });
 
-    // 清空当前周期原有的旧赛程，防止重复生成
-    await pool.query('DELETE FROM matches WHERE period_id = $1 AND tenant_id = $2', [periodId, req.tenantId]);
+    await pool.query('DELETE FROM matches WHERE tenant_id = $1', [req.tenantId]);
 
     const matches = [];
 
@@ -60,7 +58,7 @@ router.post('/generate', authMiddleware, async (req: Request, res: Response) => 
       }
     }
 
-    redis.del(`board:matches:${req.tenantId}:${periodId}`).catch(() => {});
+    redis.del(`board:matches:${req.tenantId}`).catch(() => {});
 
     const response: ApiResponse = {
       success: true,
@@ -82,12 +80,11 @@ router.post('/generate', authMiddleware, async (req: Request, res: Response) => 
   }
 });
 
-// 清空当前周期的赛程
+// 清空赛程
 router.delete('/clear', authMiddleware, async (req: Request, res: Response) => {
-  const periodId = getPeriodId();
   try {
-    await pool.query('DELETE FROM matches WHERE period_id = $1 AND tenant_id = $2', [periodId, req.tenantId]);
-    redis.del(`board:matches:${req.tenantId}:${periodId}`).catch(() => {});
+    await pool.query('DELETE FROM matches WHERE tenant_id = $1', [req.tenantId]);
+    redis.del(`board:matches:${req.tenantId}`).catch(() => {});
     return res.status(200).json({ success: true, code: 200, message: '赛程清空成功', data: null });
   } catch (error) {
     console.error('Clear matches error:', error);
@@ -117,7 +114,7 @@ router.post('/update', authMiddleware, async (req: Request, res: Response) => {
     }
     
     await pool.query('COMMIT');
-    redis.del(`board:matches:${req.tenantId}:${getPeriodId()}`).catch(() => {});
+    redis.del(`board:matches:${req.tenantId}`).catch(() => {});
     return res.status(200).json({ success: true, code: 200, message: '赛程更新成功', data: null });
   } catch (error) {
     await pool.query('ROLLBACK');
@@ -146,7 +143,7 @@ router.post('/score', authMiddleware, async (req: Request, res: Response) => {
       [scoreA, scoreB, 'completed', matchId, req.tenantId]
     );
 
-    redis.del(`board:matches:${req.tenantId}:${getPeriodId()}`).catch(() => {});
+    redis.del(`board:matches:${req.tenantId}`).catch(() => {});
 
     const response: ApiResponse = {
       success: true,

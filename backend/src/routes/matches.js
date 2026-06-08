@@ -6,15 +6,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const db_1 = __importDefault(require("../config/db"));
 const auth_1 = require("../middlewares/auth");
-const registration_1 = require("./registration");
 const redis_1 = __importDefault(require("../config/redis"));
 const router = (0, express_1.Router)();
 // 生成赛程
 router.post('/generate', auth_1.authMiddleware, async (req, res) => {
-    const periodId = (0, registration_1.getPeriodId)();
+    const periodId = 'global';
     try {
-        // 1. 获取当前周期的所有分组队伍
-        const teamsResult = await db_1.default.query('SELECT id, name, group_id FROM teams WHERE period_id = $1 AND group_id IS NOT NULL AND tenant_id = $2', [periodId, req.tenantId]);
+        // 1. 获取所有分组队伍
+        const teamsResult = await db_1.default.query('SELECT id, name, group_id FROM teams WHERE group_id IS NOT NULL AND tenant_id = $1', [req.tenantId]);
         const teams = teamsResult.rows;
         if (teams.length < 2) {
             const response = {
@@ -32,8 +31,7 @@ router.post('/generate', auth_1.authMiddleware, async (req, res) => {
                 groupsMap.set(t.group_id, []);
             groupsMap.get(t.group_id)?.push(t);
         });
-        // 清空当前周期原有的旧赛程，防止重复生成
-        await db_1.default.query('DELETE FROM matches WHERE period_id = $1 AND tenant_id = $2', [periodId, req.tenantId]);
+        await db_1.default.query('DELETE FROM matches WHERE tenant_id = $1', [req.tenantId]);
         const matches = [];
         // 在每个对战组内部两两生成对局
         for (const [groupId, groupTeams] of groupsMap.entries()) {
@@ -46,7 +44,7 @@ router.post('/generate', auth_1.authMiddleware, async (req, res) => {
                 }
             }
         }
-        redis_1.default.del(`board:matches:${req.tenantId}:${periodId}`).catch(() => { });
+        redis_1.default.del(`board:matches:${req.tenantId}`).catch(() => { });
         const response = {
             success: true,
             code: 200,
@@ -66,12 +64,11 @@ router.post('/generate', auth_1.authMiddleware, async (req, res) => {
         return res.status(500).json(response);
     }
 });
-// 清空当前周期的赛程
+// 清空赛程
 router.delete('/clear', auth_1.authMiddleware, async (req, res) => {
-    const periodId = (0, registration_1.getPeriodId)();
     try {
-        await db_1.default.query('DELETE FROM matches WHERE period_id = $1 AND tenant_id = $2', [periodId, req.tenantId]);
-        redis_1.default.del(`board:matches:${req.tenantId}:${periodId}`).catch(() => { });
+        await db_1.default.query('DELETE FROM matches WHERE tenant_id = $1', [req.tenantId]);
+        redis_1.default.del(`board:matches:${req.tenantId}`).catch(() => { });
         return res.status(200).json({ success: true, code: 200, message: '赛程清空成功', data: null });
     }
     catch (error) {
@@ -94,7 +91,7 @@ router.post('/update', auth_1.authMiddleware, async (req, res) => {
             }
         }
         await db_1.default.query('COMMIT');
-        redis_1.default.del(`board:matches:${req.tenantId}:${(0, registration_1.getPeriodId)()}`).catch(() => { });
+        redis_1.default.del(`board:matches:${req.tenantId}`).catch(() => { });
         return res.status(200).json({ success: true, code: 200, message: '赛程更新成功', data: null });
     }
     catch (error) {
@@ -117,7 +114,7 @@ router.post('/score', auth_1.authMiddleware, async (req, res) => {
     }
     try {
         await db_1.default.query('UPDATE matches SET score1 = $1, score2 = $2, status = $3 WHERE id = $4 AND tenant_id = $5', [scoreA, scoreB, 'completed', matchId, req.tenantId]);
-        redis_1.default.del(`board:matches:${req.tenantId}:${(0, registration_1.getPeriodId)()}`).catch(() => { });
+        redis_1.default.del(`board:matches:${req.tenantId}`).catch(() => { });
         const response = {
             success: true,
             code: 200,

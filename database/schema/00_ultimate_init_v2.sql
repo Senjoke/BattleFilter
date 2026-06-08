@@ -1,4 +1,4 @@
--- 终极版全量数据库初始化脚本
+-- 终极版全量数据库初始化脚本 (V2，包含打赏模块)
 -- 执行此脚本会清空现有数据并重新创建所有表，一步到位解决表结构或字段缺失问题
 
 BEGIN;
@@ -9,6 +9,10 @@ DROP TABLE IF EXISTS teams CASCADE;
 DROP TABLE IF EXISTS player_stats CASCADE;
 DROP TABLE IF EXISTS registrations CASCADE;
 DROP TABLE IF EXISTS announcements CASCADE;
+DROP TABLE IF EXISTS access_logs CASCADE;
+DROP TABLE IF EXISTS donators CASCADE;
+DROP TABLE IF EXISTS operators CASCADE;
+DROP TABLE IF EXISTS admin_contacts CASCADE;
 
 -- 1. 报名表
 CREATE TABLE registrations (
@@ -86,6 +90,32 @@ CREATE TABLE access_logs (
   ip VARCHAR(100),
   user_agent TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 7. 打赏人员表
+CREATE TABLE donators (
+    id SERIAL PRIMARY KEY,
+    tenant_id VARCHAR(50) DEFAULT 'default' NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    amount NUMERIC(10, 2) DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 8. 运营团队表
+CREATE TABLE operators (
+    id SERIAL PRIMARY KEY,
+    tenant_id VARCHAR(50) DEFAULT 'default' NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 9. 管理员打赏联系方式表
+CREATE TABLE admin_contacts (
+    id SERIAL PRIMARY KEY,
+    tenant_id VARCHAR(50) DEFAULT 'default' NOT NULL,
+    contact_type VARCHAR(20) NOT NULL, -- qq, wechat, email
+    contact_value VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 COMMIT;

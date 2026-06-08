@@ -2,7 +2,6 @@ import { Router, Request, Response } from 'express';
 import pool from '../config/db';
 import { authMiddleware } from '../middlewares/auth';
 import { ApiResponse } from '../../../shared/types';
-import { getPeriodId } from './registration';
 
 import redis from '../config/redis';
 
@@ -44,7 +43,7 @@ const getPlayerScore = (player: any, role: string): number => {
 
 // 1. 创建一组空队伍（两个队）
 router.post('/group', authMiddleware, async (req: Request, res: Response) => {
-  const periodId = getPeriodId();
+  const periodId = 'global';
   const groupId = `group-${Date.now()}`;
   const version = `v1.0-${Date.now()}`;
 
@@ -58,7 +57,7 @@ router.post('/group', authMiddleware, async (req: Request, res: Response) => {
       [periodId, req.tenantId, groupId, '队伍 B', version, '[]']
     );
 
-    redis.del(`board:teams:${req.tenantId}:${periodId}`).catch(() => {});
+    redis.del(`board:teams:${req.tenantId}`).catch(() => {});
 
     return res.status(200).json({ success: true, code: 200, message: '队伍组创建成功', data: { groupId, teams: [t1.rows[0], t2.rows[0]] } });
   } catch (error) {
@@ -80,8 +79,8 @@ router.delete('/group/:groupId', authMiddleware, async (req: Request, res: Respo
     `, [groupId, req.tenantId]);
     await pool.query('DELETE FROM teams WHERE group_id = $1 AND tenant_id = $2', [groupId, req.tenantId]);
     
-    redis.del(`board:teams:${req.tenantId}:${getPeriodId()}`).catch(() => {});
-    redis.del(`board:matches:${req.tenantId}:${getPeriodId()}`).catch(() => {});
+    redis.del(`board:teams:${req.tenantId}`).catch(() => {});
+    redis.del(`board:matches:${req.tenantId}`).catch(() => {});
 
     return res.status(200).json({ success: true, code: 200, message: '队伍组删除成功', data: null });
   } catch (error) {
@@ -94,7 +93,6 @@ router.delete('/group/:groupId', authMiddleware, async (req: Request, res: Respo
 router.post('/group/:groupId/autofill', authMiddleware, async (req: Request, res: Response) => {
   const { groupId } = req.params;
   const { wechatGroup } = req.body;
-  const periodId = getPeriodId();
 
   try {
     const teamsRes = await pool.query('SELECT * FROM teams WHERE group_id = $1 AND tenant_id = $2 ORDER BY id ASC', [groupId, req.tenantId]);
@@ -103,10 +101,10 @@ router.post('/group/:groupId/autofill', authMiddleware, async (req: Request, res
     }
     const teams = teamsRes.rows;
 
-    const regRes = await pool.query('SELECT id, battle_tag, primary_roles, secondary_roles, self_ranks, wechat_group FROM registrations WHERE period_id = $1 AND tenant_id = $2', [periodId, req.tenantId]);
+    const regRes = await pool.query('SELECT id, battle_tag, primary_roles, secondary_roles, self_ranks, wechat_group FROM registrations WHERE tenant_id = $1', [req.tenantId]);
     
     // 只从有效的分组队伍中统计已分配的玩家，保持与前端未分配池逻辑一致
-    const allTeamsRes = await pool.query('SELECT members FROM teams WHERE period_id = $1 AND group_id IS NOT NULL AND tenant_id = $2', [periodId, req.tenantId]);
+    const allTeamsRes = await pool.query('SELECT members FROM teams WHERE group_id IS NOT NULL AND tenant_id = $1', [req.tenantId]);
     const assignedGameIds = new Set<string>();
     allTeamsRes.rows.forEach(t => {
       let members = t.members;
@@ -235,7 +233,7 @@ router.post('/group/:groupId/autofill', authMiddleware, async (req: Request, res
     await pool.query('UPDATE teams SET members = $1 WHERE id = $2 AND tenant_id = $3', [JSON.stringify(membersA), teamA.id, req.tenantId]);
     await pool.query('UPDATE teams SET members = $1 WHERE id = $2 AND tenant_id = $3', [JSON.stringify(membersB), teamB.id, req.tenantId]);
 
-    redis.del(`board:teams:${req.tenantId}:${periodId}`).catch(() => {});
+    redis.del(`board:teams:${req.tenantId}`).catch(() => {});
 
     return res.status(200).json({ success: true, code: 200, message: '自动填充完成', data: null });
   } catch (error) {
@@ -266,7 +264,7 @@ router.post('/edit', authMiddleware, async (req: Request, res: Response) => {
       );
     }
 
-    redis.del(`board:teams:${req.tenantId}:${getPeriodId()}`).catch(() => {});
+    redis.del(`board:teams:${req.tenantId}`).catch(() => {});
 
     return res.status(200).json({ success: true, code: 200, message: '队伍更新成功', data: null });
   } catch (error) {

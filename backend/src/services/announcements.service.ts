@@ -1,11 +1,9 @@
 import pool from '../config/db';
-import { getPeriodId } from '../utils/period';
 import redis from '../config/redis';
 
 export class AnnouncementsService {
   static async getAnnouncement(tenantId: string) {
-    const periodId = getPeriodId();
-    const cacheKey = `announcements:${tenantId}:${periodId}`;
+    const cacheKey = `announcements:${tenantId}`;
     
     try {
       const cached = await redis.get(cacheKey);
@@ -13,8 +11,8 @@ export class AnnouncementsService {
     } catch (e) {}
 
     const result = await pool.query(
-      'SELECT * FROM announcements WHERE period_id = $1 AND tenant_id = $2 ORDER BY created_at DESC LIMIT 1',
-      [periodId, tenantId]
+      'SELECT * FROM announcements WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 1',
+      [tenantId]
     );
 
     const data = result.rows.length > 0 ? result.rows[0] : null;
@@ -27,14 +25,14 @@ export class AnnouncementsService {
   }
 
   static async saveAnnouncement(tenantId: string, title: string, content: string, startTime: string) {
-    const periodId = getPeriodId();
+    const periodId = 'global';
 
-    const checkResult = await pool.query('SELECT id FROM announcements WHERE period_id = $1 AND tenant_id = $2', [periodId, tenantId]);
+    const checkResult = await pool.query('SELECT id FROM announcements WHERE tenant_id = $1', [tenantId]);
     
     if (checkResult.rows.length > 0) {
       await pool.query(
-        'UPDATE announcements SET title = $1, content = $2, start_time = $3, updated_at = NOW() WHERE period_id = $4 AND tenant_id = $5',
-        [title, content, startTime, periodId, tenantId]
+        'UPDATE announcements SET title = $1, content = $2, start_time = $3, updated_at = NOW() WHERE tenant_id = $4',
+        [title, content, startTime, tenantId]
       );
     } else {
       await pool.query(
@@ -44,7 +42,7 @@ export class AnnouncementsService {
     }
 
     try {
-      await redis.del(`announcements:${tenantId}:${periodId}`);
+      await redis.del(`announcements:${tenantId}`);
     } catch (e) {}
   }
 }

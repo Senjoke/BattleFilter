@@ -1,11 +1,9 @@
 import pool from '../config/db';
-import { getPeriodId } from '../utils/period';
 import redis from '../config/redis';
 
 export class BoardService {
   static async getTeams(tenantId: string) {
-    const periodId = getPeriodId();
-    const cacheKey = `board:teams:${tenantId}:${periodId}`;
+    const cacheKey = `board:teams:${tenantId}`;
     
     try {
       const cached = await redis.get(cacheKey);
@@ -15,8 +13,8 @@ export class BoardService {
     }
 
     const result = await pool.query(
-      'SELECT id, name, members, group_id FROM teams WHERE period_id = $1 AND tenant_id = $2 ORDER BY created_at ASC',
-      [periodId, tenantId]
+      'SELECT id, name, members, group_id FROM teams WHERE tenant_id = $1 ORDER BY created_at ASC',
+      [tenantId]
     );
 
     try {
@@ -27,8 +25,7 @@ export class BoardService {
   }
 
   static async getMatches(tenantId: string) {
-    const periodId = getPeriodId();
-    const cacheKey = `board:matches:${tenantId}:${periodId}`;
+    const cacheKey = `board:matches:${tenantId}`;
     
     try {
       const cached = await redis.get(cacheKey);
@@ -47,9 +44,9 @@ export class BoardService {
       FROM matches m
       JOIN teams ta ON m.team1_id = ta.id
       JOIN teams tb ON m.team2_id = tb.id
-      WHERE m.period_id = $1 AND m.tenant_id = $2
+      WHERE m.tenant_id = $1
       ORDER BY m.match_order ASC, m.created_at ASC
-    `, [periodId, tenantId]);
+    `, [tenantId]);
 
     try {
       await redis.set(cacheKey, JSON.stringify(result.rows), 'EX', 3600);
@@ -59,8 +56,7 @@ export class BoardService {
   }
 
   static async getRegistrations(tenantId: string) {
-    const periodId = getPeriodId();
-    const cacheKey = `board:registrations:${tenantId}:${periodId}`;
+    const cacheKey = `board:registrations:${tenantId}`;
     
     try {
       const cached = await redis.get(cacheKey);
@@ -68,8 +64,8 @@ export class BoardService {
     } catch (e) {}
 
     const result = await pool.query(
-      'SELECT battle_tag as "battleTag" FROM registrations WHERE period_id = $1 AND tenant_id = $2 ORDER BY created_at ASC',
-      [periodId, tenantId]
+      'SELECT battle_tag as "battleTag" FROM registrations WHERE tenant_id = $1 ORDER BY created_at ASC',
+      [tenantId]
     );
 
     try {

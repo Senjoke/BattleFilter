@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import { Users, LayoutGrid, CalendarDays, Menu, X, Trash2, Wand2, Plus, Bell, ArrowUp, ArrowDown, LogOut, ExternalLink, Edit2 } from 'lucide-vue-next'
+import { Users, LayoutGrid, CalendarDays, Menu, X, Trash2, Wand2, Plus, Bell, ArrowUp, ArrowDown, LogOut, ExternalLink, Edit2, Gift } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import request from '../api/request'
 
@@ -13,6 +13,7 @@ const navigation = [
   { id: 'teams', name: '分队管理', icon: LayoutGrid },
   { id: 'schedule', name: '赛程安排', icon: CalendarDays },
   { id: 'announcement', name: '赛事公告', icon: Bell },
+  { id: 'donation', name: '打赏管理', icon: Gift },
 ]
 
 // 数据状态
@@ -26,15 +27,39 @@ const isRegistrationOpen = ref(true)
 // 筛选状态
 const filterGroupRegistration = ref('all')
 const filterGroupPlayerPool = ref('all')
+const searchRegistrationText = ref('')
+const searchPlayerPoolText = ref('')
 
 const filteredPlayers = computed(() => {
-  if (filterGroupRegistration.value === 'all') return players.value;
-  return players.value.filter(p => p.wechatGroup === filterGroupRegistration.value);
+  let result = players.value;
+  if (filterGroupRegistration.value !== 'all') {
+    result = result.filter(p => p.wechatGroup === filterGroupRegistration.value);
+  }
+  if (searchRegistrationText.value.trim()) {
+    const keyword = searchRegistrationText.value.trim().toLowerCase();
+    result = result.filter(p => 
+      (p.gameId && p.gameId.toLowerCase().includes(keyword)) ||
+      (p.wechatId && p.wechatId.toLowerCase().includes(keyword)) ||
+      (p.nickname && p.nickname.toLowerCase().includes(keyword))
+    );
+  }
+  return result;
 })
 
 const filteredPlayerPool = computed(() => {
-  if (filterGroupPlayerPool.value === 'all') return playerPool.value;
-  return playerPool.value.filter(p => p.wechatGroup === filterGroupPlayerPool.value);
+  let result = playerPool.value;
+  if (filterGroupPlayerPool.value !== 'all') {
+    result = result.filter(p => p.wechatGroup === filterGroupPlayerPool.value);
+  }
+  if (searchPlayerPoolText.value.trim()) {
+    const keyword = searchPlayerPoolText.value.trim().toLowerCase();
+    result = result.filter(p => 
+      (p.gameId && p.gameId.toLowerCase().includes(keyword)) ||
+      (p.wechatId && p.wechatId.toLowerCase().includes(keyword)) ||
+      (p.nickname && p.nickname.toLowerCase().includes(keyword))
+    );
+  }
+  return result;
 })
 
 // 职位映射
@@ -60,6 +85,7 @@ const fetchData = async () => {
   await fetchTeams()
   await fetchMatches()
   await fetchAnnouncement()
+  await fetchDonationData()
 }
 
 const fetchRegistrationStatus = async () => {
@@ -338,6 +364,11 @@ const getTeamSlots = (members: any[]) => {
   })
   
   return slots
+}
+
+const getPlayerSelfRanks = (gameId: string) => {
+  const player = players.value.find(p => p.gameId === gameId)
+  return player?.selfRanks || {}
 }
 
 const createTeamGroup = async () => {
@@ -673,6 +704,193 @@ const handleLogout = () => {
     router.push('/login')
   })
 }
+
+// ------------------------- 打赏管理逻辑 -------------------------
+const donators = ref<any[]>([])
+const operators = ref<any[]>([])
+const adminContacts = ref<any[]>([])
+
+const fetchDonationData = async () => {
+  try {
+    const res: any = await request.get('/footer')
+    if (res.success && res.data) {
+      donators.value = res.data.donators
+      operators.value = res.data.operators
+      adminContacts.value = res.data.adminContacts
+    }
+  } catch (error) {
+    console.error('获取打赏管理数据失败', error)
+  }
+}
+
+// 通用增删改操作
+const handleAddDonator = async () => {
+  const name = window.prompt('请输入打赏人员名称：')
+  if (!name) return
+  const amountStr = window.prompt('请输入打赏额度（数字）：', '0')
+  if (amountStr === null) return
+  const amount = Number(amountStr)
+  if (isNaN(amount) || amount < 0) {
+    alert('打赏额度必须为大于等于0的数字')
+    return
+  }
+  
+  try {
+    const res: any = await request.post('/footer/admin/donators', { name, amount })
+    if (res.success) await fetchDonationData()
+    else alert(res.message || '添加失败')
+  } catch (error: any) {
+    alert(error.response?.data?.message || '网络错误，添加失败')
+  }
+}
+
+const handleEditDonator = async (item: any) => {
+  const name = window.prompt('请输入新的名称：', item.name)
+  if (!name) return
+  const amountStr = window.prompt('请输入新的打赏额度（数字）：', String(item.amount))
+  if (amountStr === null) return
+  const amount = Number(amountStr)
+  if (isNaN(amount) || amount < 0) {
+    alert('打赏额度必须为大于等于0的数字')
+    return
+  }
+  
+  try {
+    const res: any = await request.put(`/footer/admin/donators/${item.id}`, { name, amount })
+    if (res.success) await fetchDonationData()
+    else alert(res.message || '修改失败')
+  } catch (error: any) {
+    alert(error.response?.data?.message || '网络错误，修改失败')
+  }
+}
+
+const handleDeleteDonator = async (id: number) => {
+  showConfirm('确定要删除该打赏人员吗？', async () => {
+    try {
+      const res: any = await request.delete(`/footer/admin/donators/${id}`)
+      if (res.success) await fetchDonationData()
+      else alert(res.message || '删除失败')
+    } catch (error: any) {
+      alert(error.response?.data?.message || '网络错误，删除失败')
+    }
+  })
+}
+
+const handleAddOperator = async () => {
+  const name = window.prompt('请输入运营团队成员名称：')
+  if (!name) return
+  try {
+    const res: any = await request.post('/footer/admin/operators', { name })
+    if (res.success) await fetchDonationData()
+    else alert(res.message || '添加失败')
+  } catch (error: any) {
+    alert(error.response?.data?.message || '网络错误，添加失败')
+  }
+}
+
+const handleEditOperator = async (item: any) => {
+  const name = window.prompt('请输入新的名称：', item.name)
+  if (!name) return
+  try {
+    const res: any = await request.put(`/footer/admin/operators/${item.id}`, { name })
+    if (res.success) await fetchDonationData()
+    else alert(res.message || '修改失败')
+  } catch (error: any) {
+    alert(error.response?.data?.message || '网络错误，修改失败')
+  }
+}
+
+const handleDeleteOperator = async (id: number) => {
+  showConfirm('确定要删除该运营团队成员吗？', async () => {
+    try {
+      const res: any = await request.delete(`/footer/admin/operators/${id}`)
+      if (res.success) await fetchDonationData()
+      else alert(res.message || '删除失败')
+    } catch (error: any) {
+      alert(error.response?.data?.message || '网络错误，删除失败')
+    }
+  })
+}
+
+const handleAddContact = async () => {
+  if (adminContacts.value.length >= 5) {
+    alert('最多只能添加 5 个管理员打赏联系方式')
+    return
+  }
+  
+  const type = window.prompt('请输入联系方式类型 (qq / wechat / email)：')
+  if (!type || !['qq', 'wechat', 'email'].includes(type.toLowerCase())) {
+    alert('类型只能是 qq, wechat 或 email')
+    return
+  }
+  const value = window.prompt('请输入联系内容：')
+  if (!value) return
+  
+  if (type.toLowerCase() === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+    alert('请输入有效的邮箱地址')
+    return
+  }
+  
+  try {
+    const res: any = await request.post('/footer/admin/contacts', { type: type.toLowerCase(), value })
+    if (res.success) await fetchDonationData()
+    else alert(res.message || '添加失败')
+  } catch (error: any) {
+    alert(error.response?.data?.message || '网络错误，添加失败')
+  }
+}
+
+const handleEditContact = async (item: any) => {
+  const type = window.prompt('请输入新的联系方式类型 (qq / wechat / email)：', item.type)
+  if (!type || !['qq', 'wechat', 'email'].includes(type.toLowerCase())) {
+    alert('类型只能是 qq, wechat 或 email')
+    return
+  }
+  const value = window.prompt('请输入新的联系内容：', item.value)
+  if (!value) return
+  
+  if (type.toLowerCase() === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+    alert('请输入有效的邮箱地址')
+    return
+  }
+  
+  try {
+    const res: any = await request.put(`/footer/admin/contacts/${item.id}`, { type: type.toLowerCase(), value })
+    if (res.success) await fetchDonationData()
+    else alert(res.message || '修改失败')
+  } catch (error: any) {
+    alert(error.response?.data?.message || '网络错误，修改失败')
+  }
+}
+
+const handleDeleteContact = async (id: number) => {
+  showConfirm('确定要删除该联系方式吗？', async () => {
+    try {
+      const res: any = await request.delete(`/footer/admin/contacts/${id}`)
+      if (res.success) await fetchDonationData()
+      else alert(res.message || '删除失败')
+    } catch (error: any) {
+      alert(error.response?.data?.message || '网络错误，删除失败')
+    }
+  })
+}
+
+// 搜索状态
+const searchDonatorText = ref('')
+const searchOperatorText = ref('')
+
+const filteredDonators = computed(() => {
+  if (!searchDonatorText.value.trim()) return donators.value
+  const kw = searchDonatorText.value.trim().toLowerCase()
+  return donators.value.filter(d => d.name.toLowerCase().includes(kw))
+})
+
+const filteredOperators = computed(() => {
+  if (!searchOperatorText.value.trim()) return operators.value
+  const kw = searchOperatorText.value.trim().toLowerCase()
+  return operators.value.filter(o => o.name.toLowerCase().includes(kw))
+})
+
 </script>
 
 <template>
@@ -737,9 +955,10 @@ const handleLogout = () => {
         
         <!-- Registration Hall -->
         <div v-if="currentTab === 'registration'">
-          <div class="flex justify-between items-center mb-6">
-            <div class="flex items-center space-x-4">
+          <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+            <div class="flex flex-wrap items-center gap-4">
               <h2 class="text-2xl font-bold text-gray-800">报名大厅</h2>
+              <input type="text" v-model="searchRegistrationText" placeholder="搜索战网ID或微信" class="border border-gray-300 rounded-md text-sm py-1.5 px-3 focus:outline-none focus:ring-1 focus:ring-blue-500 w-48">
               <select v-model="filterGroupRegistration" class="border border-gray-300 rounded-md text-sm py-1.5 px-3 focus:outline-none focus:ring-1 focus:ring-blue-500">
                 <option value="all">全部群组</option>
                 <option value="一群">一群</option>
@@ -747,7 +966,7 @@ const handleLogout = () => {
               </select>
               
               <!-- 报名通道开关 -->
-              <div class="flex items-center space-x-2 ml-4 bg-gray-50 px-3 py-1.5 rounded-md border border-gray-200">
+              <div class="flex items-center space-x-2 bg-gray-50 px-3 py-1.5 rounded-md border border-gray-200">
                 <span class="text-sm font-medium text-gray-700">报名通道</span>
                 <button 
                   @click="toggleRegistrationStatus"
@@ -855,23 +1074,33 @@ const handleLogout = () => {
                 </div>
                 <ul class="space-y-2">
                   <!-- 渲染5个职责槽位 -->
-                  <li v-for="(slot, i) in getTeamSlots(team.members)" :key="i" class="flex justify-between items-center p-2 rounded bg-gray-50 border border-gray-100">
-                    <div class="flex items-center">
-                      <span class="inline-block w-16 text-xs font-bold text-gray-400 text-center mr-2">{{ slot.label }}</span>
-                      <span v-if="slot.member" class="text-sm font-medium text-gray-900">{{ slot.member.nickname }}</span>
-                      <span v-else class="text-sm italic text-gray-400">空缺</span>
+                  <li v-for="(slot, i) in getTeamSlots(team.members)" :key="i" class="flex flex-col p-2 rounded bg-gray-50 border border-gray-100">
+                    <div class="flex justify-between items-center w-full">
+                      <div class="flex items-center">
+                        <span class="inline-block w-16 text-xs font-bold text-gray-400 text-center mr-2">{{ slot.label }}</span>
+                        <span v-if="slot.member" class="text-sm font-medium text-gray-900">{{ slot.member.nickname }}</span>
+                        <span v-else class="text-sm italic text-gray-400">空缺</span>
+                      </div>
+                      <div v-if="slot.member" class="flex items-center space-x-2">
+                        <select v-model="slot.member.assignedRole" @change="saveTeamChanges(team)" class="text-xs border border-gray-200 rounded px-1 py-0.5 bg-white focus:outline-none text-gray-600">
+                          <option value="tank">重装</option>
+                          <option value="damage">输出</option>
+                          <option value="support">支援</option>
+                          <option value="flex">补位</option>
+                        </select>
+                        <span class="text-xs text-gray-500 w-16 truncate" :title="slot.member.gameId">{{ slot.member.gameId.split('#')[1] ? '#' + slot.member.gameId.split('#')[1] : slot.member.gameId }}</span>
+                        <button @click="removePlayerFromTeam(team.id, slot.member.gameId)" class="text-gray-400 hover:text-red-500 p-1 rounded-full hover:bg-red-50 transition-colors" title="移出队伍">
+                          <X class="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
-                    <div v-if="slot.member" class="flex items-center space-x-2">
-                      <select v-model="slot.member.assignedRole" @change="saveTeamChanges(team)" class="text-xs border border-gray-200 rounded px-1 py-0.5 bg-white focus:outline-none text-gray-600">
-                        <option value="tank">重装</option>
-                        <option value="damage">输出</option>
-                        <option value="support">支援</option>
-                        <option value="flex">补位</option>
-                      </select>
-                      <span class="text-xs text-gray-500 w-16 truncate" :title="slot.member.gameId">{{ slot.member.gameId.split('#')[1] ? '#' + slot.member.gameId.split('#')[1] : slot.member.gameId }}</span>
-                      <button @click="removePlayerFromTeam(team.id, slot.member.gameId)" class="text-gray-400 hover:text-red-500 p-1 rounded-full hover:bg-red-50 transition-colors" title="移出队伍">
-                        <X class="w-4 h-4" />
-                      </button>
+                    <!-- 队员段位信息 -->
+                    <div v-if="slot.member && Object.keys(getPlayerSelfRanks(slot.member.gameId)).length > 0" class="flex items-center mt-1.5 ml-[4.5rem]">
+                      <div class="text-xs space-x-1 flex items-center">
+                        <span v-if="getPlayerSelfRanks(slot.member.gameId).tank" class="bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">坦:{{ getPlayerSelfRanks(slot.member.gameId).tank }}</span>
+                        <span v-if="getPlayerSelfRanks(slot.member.gameId).damage" class="bg-red-50 text-red-600 px-1.5 py-0.5 rounded">输:{{ getPlayerSelfRanks(slot.member.gameId).damage }}</span>
+                        <span v-if="getPlayerSelfRanks(slot.member.gameId).support" class="bg-green-50 text-green-600 px-1.5 py-0.5 rounded">支:{{ getPlayerSelfRanks(slot.member.gameId).support }}</span>
+                      </div>
                     </div>
                   </li>
                 </ul>
@@ -882,8 +1111,9 @@ const handleLogout = () => {
           <!-- Unassigned Player Pool -->
           <div class="mt-12">
             <div class="flex flex-col sm:flex-row sm:justify-between items-start sm:items-center gap-4 mb-4">
-              <div class="flex items-center space-x-4">
+              <div class="flex items-center space-x-4 flex-wrap gap-y-2">
                 <h3 class="text-xl font-bold text-gray-800">未分配选手池</h3>
+                <input type="text" v-model="searchPlayerPoolText" placeholder="搜索战网ID或微信" class="border border-gray-300 rounded-md text-sm py-1.5 px-3 focus:outline-none focus:ring-1 focus:ring-blue-500 w-48">
                 <select v-model="filterGroupPlayerPool" class="border border-gray-300 rounded-md text-sm py-1.5 px-3 focus:outline-none focus:ring-1 focus:ring-blue-500">
                   <option value="all">全部群组</option>
                   <option value="一群">一群</option>
@@ -1028,6 +1258,124 @@ const handleLogout = () => {
             </div>
             <div v-if="matches.length === 0" class="border-2 border-dashed border-gray-200 rounded-lg p-12 text-center text-gray-500">
               暂无赛程安排，请先完成分队后点击上方"重新发布赛程"按钮
+            </div>
+          </div>
+        </div>
+
+        <!-- Donation Management -->
+        <div v-if="currentTab === 'donation'">
+          <div class="flex justify-between items-center mb-6">
+            <h2 class="text-2xl font-bold text-gray-800">打赏管理</h2>
+          </div>
+          
+          <!-- 打赏人员管理 -->
+          <div class="mb-8 border border-gray-200 rounded-lg shadow-sm bg-white overflow-hidden">
+            <div class="bg-gray-50 px-4 py-3 border-b border-gray-200 flex justify-between items-center">
+              <h3 class="font-bold text-gray-700">打赏人员 (按金额降序)</h3>
+              <div class="flex space-x-2">
+                <input type="text" v-model="searchDonatorText" placeholder="搜索打赏人员" class="border border-gray-300 rounded-md text-sm py-1.5 px-3 focus:outline-none focus:ring-1 focus:ring-blue-500 w-48">
+                <button @click="handleAddDonator" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-md text-sm font-medium transition-colors">
+                  添加人员
+                </button>
+              </div>
+            </div>
+            <div class="p-4">
+              <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                  <tr>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">名称</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">打赏金额</th>
+                    <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">操作</th>
+                  </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                  <tr v-for="item in filteredDonators" :key="item.id">
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{{ item.name }}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ item.amount }}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                      <button @click="handleEditDonator(item)" class="text-blue-600 hover:text-blue-900">编辑</button>
+                      <button @click="handleDeleteDonator(item.id)" class="text-red-600 hover:text-red-900">删除</button>
+                    </td>
+                  </tr>
+                  <tr v-if="filteredDonators.length === 0">
+                    <td colspan="3" class="px-6 py-8 text-center text-gray-500">暂无打赏人员</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 运营团队管理 -->
+          <div class="mb-8 border border-gray-200 rounded-lg shadow-sm bg-white overflow-hidden">
+            <div class="bg-gray-50 px-4 py-3 border-b border-gray-200 flex justify-between items-center">
+              <h3 class="font-bold text-gray-700">运营团队</h3>
+              <div class="flex space-x-2">
+                <input type="text" v-model="searchOperatorText" placeholder="搜索运营成员" class="border border-gray-300 rounded-md text-sm py-1.5 px-3 focus:outline-none focus:ring-1 focus:ring-blue-500 w-48">
+                <button @click="handleAddOperator" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-md text-sm font-medium transition-colors">
+                  添加成员
+                </button>
+              </div>
+            </div>
+            <div class="p-4">
+              <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                  <tr>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">名称</th>
+                    <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">操作</th>
+                  </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                  <tr v-for="item in filteredOperators" :key="item.id">
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{{ item.name }}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                      <button @click="handleEditOperator(item)" class="text-blue-600 hover:text-blue-900">编辑</button>
+                      <button @click="handleDeleteOperator(item.id)" class="text-red-600 hover:text-red-900">删除</button>
+                    </td>
+                  </tr>
+                  <tr v-if="filteredOperators.length === 0">
+                    <td colspan="2" class="px-6 py-8 text-center text-gray-500">暂无运营人员</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 管理员打赏联系方式管理 -->
+          <div class="border border-gray-200 rounded-lg shadow-sm bg-white overflow-hidden">
+            <div class="bg-gray-50 px-4 py-3 border-b border-gray-200 flex justify-between items-center">
+              <h3 class="font-bold text-gray-700">管理员打赏联系方式 (最多5个)</h3>
+              <button @click="handleAddContact" :disabled="adminContacts.length >= 5" :class="adminContacts.length >= 5 ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'" class="text-white px-3 py-1.5 rounded-md text-sm font-medium transition-colors">
+                添加联系方式
+              </button>
+            </div>
+            <div class="p-4">
+              <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                  <tr>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">类型</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">联系内容</th>
+                    <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">操作</th>
+                  </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                  <tr v-for="item in adminContacts" :key="item.id">
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      <span v-if="item.type === 'qq'" class="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">QQ</span>
+                      <span v-else-if="item.type === 'wechat'" class="px-2 py-1 bg-green-100 text-green-800 rounded text-xs">微信</span>
+                      <span v-else-if="item.type === 'email'" class="px-2 py-1 bg-gray-100 text-gray-800 rounded text-xs">邮箱</span>
+                      <span v-else class="px-2 py-1 bg-gray-100 text-gray-800 rounded text-xs">{{ item.type }}</span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ item.value }}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                      <button @click="handleEditContact(item)" class="text-blue-600 hover:text-blue-900">编辑</button>
+                      <button @click="handleDeleteContact(item.id)" class="text-red-600 hover:text-red-900">删除</button>
+                    </td>
+                  </tr>
+                  <tr v-if="adminContacts.length === 0">
+                    <td colspan="3" class="px-6 py-8 text-center text-gray-500">暂无联系方式</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>

@@ -9,6 +9,7 @@ import matchesRouter from './routes/matches';
 import boardRouter from './routes/board';
 import announcementsRouter from './routes/announcements';
 import metricsRouter from './routes/metrics';
+import footerRouter from './routes/footer';
 
 import { tenantMiddleware } from './middlewares/tenant';
 import { metricsMiddleware } from './middlewares/metrics';
@@ -45,6 +46,9 @@ app.use('/api/board', boardRouter); // GET /api/board/teams, GET /api/board/matc
 
 // Announcements
 app.use('/api/announcements', announcementsRouter);
+
+// Footer
+app.use('/api/footer', footerRouter);
 
 // Metrics
 app.use('/api/admin/metrics', metricsRouter);
