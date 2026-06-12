@@ -10,4 +10,7 @@ router.get('/', AnnouncementsController.getAnnouncement);
 // 保存公告 (B端)
 router.post('/', authMiddleware, AnnouncementsController.saveAnnouncement);
 
+// 清除公告 (B端)
+router.delete('/', authMiddleware, AnnouncementsController.clearAnnouncement);
+
 export default router;

@@ -160,6 +160,21 @@ const deleteRegistration = async (id: number) => {
   })
 }
 
+const updatePlayerGroup = async (player: any) => {
+  try {
+    const res: any = await request.put(`/admin/registrations/${player.id}/group`, {
+      wechatGroup: player.wechatGroup
+    })
+    if (!res.success) {
+      alert(res.message || '修改群组失败')
+      await fetchRegistrations() // 恢复原状
+    }
+  } catch (error: any) {
+    alert(error.response?.data?.message || '网络错误，修改失败')
+    await fetchRegistrations() // 恢复原状
+  }
+}
+
 const clearRegistrations = async () => {
   showConfirm('确定要清空所有报名信息吗？该操作会将报名大厅中的数据全部移除，不可恢复！', async () => {
     try {
@@ -290,6 +305,22 @@ const saveAnnouncement = async () => {
       }
     } catch (error: any) {
       alert(error.response?.data?.message || '网络错误，保存失败')
+    }
+  })
+}
+
+const clearAnnouncement = async () => {
+  showConfirm('确定要清除当前的赛事公告吗？清除后前台将不再显示。', async () => {
+    try {
+      const res: any = await request.delete('/announcements')
+      if (res.success) {
+        announcement.value = { title: '', content: '', startTime: '' }
+        alert('公告清除成功！')
+      } else {
+        alert(res.message || '公告清除失败')
+      }
+    } catch (error: any) {
+      alert(error.response?.data?.message || '网络错误，清除失败')
     }
   })
 }
@@ -1004,9 +1035,15 @@ const filteredOperators = computed(() => {
                 <tr v-for="player in filteredPlayers" :key="player.id">
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{{ player.gameId }}</td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    <span :class="player.wechatGroup === '一群' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'" class="px-2 py-1 rounded text-xs font-medium">
-                      {{ player.wechatGroup }}
-                    </span>
+                    <select 
+                      v-model="player.wechatGroup" 
+                      @change="updatePlayerGroup(player)"
+                      :class="player.wechatGroup === '一群' ? 'bg-blue-50 text-blue-800 border-blue-200' : 'bg-green-50 text-green-800 border-green-200'" 
+                      class="px-2 py-1 rounded text-xs font-medium border focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      <option value="一群">一群</option>
+                      <option value="二群">二群</option>
+                    </select>
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ player.wechatId }}</td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ player.primaryRolesText || '无' }}</td>
@@ -1191,9 +1228,14 @@ const filteredOperators = computed(() => {
         <div v-if="currentTab === 'announcement'">
           <div class="flex justify-between items-center mb-6">
             <h2 class="text-2xl font-bold text-gray-800">赛事公告管理</h2>
-            <button @click="saveAnnouncement" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
-              保存并发布公告
-            </button>
+            <div class="space-x-3">
+              <button @click="clearAnnouncement" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
+                清除当前公告
+              </button>
+              <button @click="saveAnnouncement" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
+                保存并发布公告
+              </button>
+            </div>
           </div>
           <div class="bg-white border border-gray-200 rounded-lg p-6 shadow-sm space-y-6">
             <div>

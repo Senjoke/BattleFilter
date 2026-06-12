@@ -29,18 +29,28 @@ export class AnnouncementsService {
 
     const checkResult = await pool.query('SELECT id FROM announcements WHERE tenant_id = $1', [tenantId]);
     
+    let result;
     if (checkResult.rows.length > 0) {
-      await pool.query(
-        'UPDATE announcements SET title = $1, content = $2, start_time = $3, updated_at = NOW() WHERE tenant_id = $4',
+      result = await pool.query(
+        'UPDATE announcements SET title = $1, content = $2, start_time = $3, updated_at = NOW() WHERE tenant_id = $4 RETURNING *',
         [title, content, startTime, tenantId]
       );
     } else {
-      await pool.query(
-        'INSERT INTO announcements (title, content, start_time, period_id, tenant_id) VALUES ($1, $2, $3, $4, $5)',
+      result = await pool.query(
+        'INSERT INTO announcements (title, content, start_time, period_id, tenant_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
         [title, content, startTime, periodId, tenantId]
       );
     }
 
+    try {
+      await redis.del(`announcements:${tenantId}`);
+    } catch (e) {}
+
+    return result.rows[0];
+  }
+
+  static async clearAnnouncement(tenantId: string) {
+    await pool.query('DELETE FROM announcements WHERE tenant_id = $1', [tenantId]);
     try {
       await redis.del(`announcements:${tenantId}`);
     } catch (e) {}

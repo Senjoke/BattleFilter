@@ -162,6 +162,23 @@ router.delete('/admin/registrations/clear', auth_1.authMiddleware, async (req, r
         return res.status(500).json({ success: false, code: 500, message: '服务器内部错误', data: null });
     }
 });
+// B端: PUT /api/admin/registrations/:id/group
+router.put('/admin/registrations/:id/group', auth_1.authMiddleware, async (req, res) => {
+    const { id } = req.params;
+    const { wechatGroup } = req.body;
+    if (!wechatGroup) {
+        return res.status(400).json({ success: false, code: 400, message: '缺少群组信息', data: null });
+    }
+    try {
+        await db_1.default.query('UPDATE registrations SET wechat_group = $1 WHERE id = $2 AND tenant_id = $3', [wechatGroup, id, req.tenantId]);
+        redis_1.default.del(`board:registrations:${req.tenantId}`).catch(() => { });
+        return res.status(200).json({ success: true, code: 200, message: '修改群组成功', data: null });
+    }
+    catch (error) {
+        console.error('Update registration group error:', error);
+        return res.status(500).json({ success: false, code: 500, message: '服务器内部错误', data: null });
+    }
+});
 // B端: DELETE /api/admin/registrations/:id
 router.delete('/admin/registrations/:id', auth_1.authMiddleware, async (req, res) => {
     const { id } = req.params;

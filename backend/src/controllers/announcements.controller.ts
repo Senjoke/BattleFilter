@@ -4,29 +4,70 @@ import { ApiResponse } from '../../../shared/types';
 
 export class AnnouncementsController {
   static async getAnnouncement(req: Request, res: Response) {
+    const tenantId = req.tenantId || 'default';
+    
     try {
-      const data = await AnnouncementsService.getAnnouncement(req.tenantId || 'default');
-      const response: ApiResponse = {
-        success: true, code: 200, message: '获取公告成功', data
-      };
-      res.status(200).json(response);
+      const announcement = await AnnouncementsService.getAnnouncement(tenantId);
+      
+      if (announcement) {
+        return res.status(200).json({
+          success: true,
+          code: 200,
+          message: '获取公告成功',
+          data: announcement
+        } as ApiResponse);
+      } else {
+        return res.status(200).json({
+          success: true,
+          code: 200,
+          message: '暂无公告',
+          data: null
+        });
+      }
     } catch (error) {
-      console.error('Fetch announcement error:', error);
-      res.status(500).json({ success: false, code: 500, message: '服务器内部错误', data: null });
+      console.error('Fetch announcements error:', error);
+      return res.status(500).json({ success: false, code: 500, message: '服务器内部错误', data: null });
     }
   }
 
   static async saveAnnouncement(req: Request, res: Response) {
     const { title, content, startTime } = req.body;
+    const tenantId = req.tenantId || 'default';
+
+    if (!title || !content) {
+      return res.status(400).json({ success: false, code: 400, message: '标题和内容不能为空', data: null });
+    }
+
     try {
-      await AnnouncementsService.saveAnnouncement(req.tenantId || 'default', title, content, startTime);
-      const response: ApiResponse = {
-        success: true, code: 200, message: '公告保存成功', data: null
-      };
-      res.status(200).json(response);
+      const saved = await AnnouncementsService.saveAnnouncement(tenantId, title, content, startTime);
+      
+      return res.status(200).json({
+        success: true,
+        code: 200,
+        message: '公告保存成功',
+        data: saved
+      } as ApiResponse);
     } catch (error) {
       console.error('Save announcement error:', error);
-      res.status(500).json({ success: false, code: 500, message: '服务器内部错误', data: null });
+      return res.status(500).json({ success: false, code: 500, message: '服务器内部错误', data: null });
+    }
+  }
+
+  static async clearAnnouncement(req: Request, res: Response) {
+    const tenantId = req.tenantId || 'default';
+
+    try {
+      await AnnouncementsService.clearAnnouncement(tenantId);
+      
+      return res.status(200).json({
+        success: true,
+        code: 200,
+        message: '公告清除成功',
+        data: null
+      } as ApiResponse);
+    } catch (error) {
+      console.error('Clear announcement error:', error);
+      return res.status(500).json({ success: false, code: 500, message: '服务器内部错误', data: null });
     }
   }
 }

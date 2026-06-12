@@ -26,12 +26,21 @@ class AnnouncementsService {
     static async saveAnnouncement(tenantId, title, content, startTime) {
         const periodId = 'global';
         const checkResult = await db_1.default.query('SELECT id FROM announcements WHERE tenant_id = $1', [tenantId]);
+        let result;
         if (checkResult.rows.length > 0) {
-            await db_1.default.query('UPDATE announcements SET title = $1, content = $2, start_time = $3, updated_at = NOW() WHERE tenant_id = $4', [title, content, startTime, tenantId]);
+            result = await db_1.default.query('UPDATE announcements SET title = $1, content = $2, start_time = $3, updated_at = NOW() WHERE tenant_id = $4 RETURNING *', [title, content, startTime, tenantId]);
         }
         else {
-            await db_1.default.query('INSERT INTO announcements (title, content, start_time, period_id, tenant_id) VALUES ($1, $2, $3, $4, $5)', [title, content, startTime, periodId, tenantId]);
+            result = await db_1.default.query('INSERT INTO announcements (title, content, start_time, period_id, tenant_id) VALUES ($1, $2, $3, $4, $5) RETURNING *', [title, content, startTime, periodId, tenantId]);
         }
+        try {
+            await redis_1.default.del(`announcements:${tenantId}`);
+        }
+        catch (e) { }
+        return result.rows[0];
+    }
+    static async clearAnnouncement(tenantId) {
+        await db_1.default.query('DELETE FROM announcements WHERE tenant_id = $1', [tenantId]);
         try {
             await redis_1.default.del(`announcements:${tenantId}`);
         }

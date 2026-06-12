@@ -101,6 +101,12 @@ const confirmDialog = ref({
   message: ''
 })
 
+const announcementDialog = ref({
+  show: false,
+  countdown: 3,
+  timer: null as any
+})
+
 const handleFormSubmit = () => {
   if (!battlenetId.value || !wechatId.value || primaryRoles.value.length === 0) return
   
@@ -109,10 +115,34 @@ const handleFormSubmit = () => {
     return
   }
   
-  confirmDialog.value = {
-    show: true,
-    message: '确认提交报名信息吗？'
+  if (announcement.value && announcement.value.content) {
+    announcementDialog.value.show = true
+    announcementDialog.value.countdown = 3
+    announcementDialog.value.timer = setInterval(() => {
+      if (announcementDialog.value.countdown > 0) {
+        announcementDialog.value.countdown--
+      } else {
+        clearInterval(announcementDialog.value.timer)
+      }
+    }, 1000)
+  } else {
+    confirmDialog.value = {
+      show: true,
+      message: '确认提交报名信息吗？'
+    }
   }
+}
+
+const closeAnnouncementDialog = () => {
+  announcementDialog.value.show = false
+  if (announcementDialog.value.timer) {
+    clearInterval(announcementDialog.value.timer)
+  }
+}
+
+const confirmFromAnnouncement = () => {
+  closeAnnouncementDialog()
+  submitRegistration()
 }
 
 const submitRegistration = async () => {
@@ -347,6 +377,36 @@ const submitRegistration = async () => {
           </button>
           <button @click="submitRegistration" class="px-4 py-2 bg-orange-600 text-white hover:bg-orange-700 rounded-md text-sm font-medium transition-colors">
             确认
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Announcement Modal -->
+    <div v-if="announcementDialog.show" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 transition-opacity">
+      <div class="bg-white rounded-lg shadow-xl max-w-lg w-full p-6 transform transition-all max-h-[80vh] flex flex-col">
+        <h3 class="text-lg font-bold text-gray-900 mb-4 flex items-center">
+          <Megaphone class="h-5 w-5 text-yellow-500 mr-2" />
+          赛事公告
+        </h3>
+        <div class="text-sm text-gray-700 whitespace-pre-wrap flex-1 overflow-y-auto bg-gray-50 p-4 rounded border border-gray-200 mb-6">
+          <div class="font-bold mb-2">{{ announcement.title }}</div>
+          <div>{{ announcement.content }}</div>
+          <div v-if="announcement.start_time" class="mt-4 text-xs font-medium text-yellow-800 bg-yellow-100 inline-block px-2 py-1 rounded">
+            赛事开始时间：{{ new Date(announcement.start_time).toLocaleString() }}
+          </div>
+        </div>
+        <div class="flex justify-end space-x-3 mt-auto pt-4 border-t border-gray-100">
+          <button @click="closeAnnouncementDialog" class="px-4 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-md text-sm font-medium transition-colors">
+            取消
+          </button>
+          <button 
+            @click="confirmFromAnnouncement" 
+            :disabled="announcementDialog.countdown > 0"
+            :class="announcementDialog.countdown > 0 ? 'bg-gray-400 cursor-not-allowed' : 'bg-orange-600 hover:bg-orange-700'"
+            class="px-4 py-2 text-white rounded-md text-sm font-medium transition-colors min-w-[100px]"
+          >
+            {{ announcementDialog.countdown > 0 ? `请阅读 (${announcementDialog.countdown}s)` : '确认报名' }}
           </button>
         </div>
       </div>

@@ -8,5 +8,7 @@ const router = (0, express_1.Router)();
 router.get('/', announcements_controller_1.AnnouncementsController.getAnnouncement);
 // 保存公告 (B端)
 router.post('/', auth_1.authMiddleware, announcements_controller_1.AnnouncementsController.saveAnnouncement);
+// 清除公告 (B端)
+router.delete('/', auth_1.authMiddleware, announcements_controller_1.AnnouncementsController.clearAnnouncement);
 exports.default = router;
 //# sourceMappingURL=announcements.js.map
