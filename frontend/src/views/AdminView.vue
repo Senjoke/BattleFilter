@@ -7,10 +7,27 @@ import request from '../api/request'
 const router = useRouter()
 const isMobileMenuOpen = ref(false)
 const currentTab = ref('teams') // 默认进入分队管理
+type TeamMode = '5v5' | '6v6'
+
+const teamModeConfigs: Record<TeamMode, { label: string; title: string; maxPlayers: number; slots: string[] }> = {
+  '5v5': {
+    label: '5V5',
+    title: '分队管理 (5V5)',
+    maxPlayers: 5,
+    slots: ['tank', 'damage', 'damage', 'support', 'support']
+  },
+  '6v6': {
+    label: '6V6',
+    title: '分队管理 (6V6)',
+    maxPlayers: 6,
+    slots: ['tank', 'tank', 'damage', 'damage', 'support', 'support']
+  }
+}
 
 const navigation = [
   { id: 'registration', name: '报名大厅', icon: Users },
-  { id: 'teams', name: '分队管理', icon: LayoutGrid },
+  { id: 'teams', name: '分队管理（5V5）', icon: LayoutGrid },
+  { id: 'teams6v6', name: '分队管理（6V6）', icon: LayoutGrid },
   { id: 'schedule', name: '赛程安排', icon: CalendarDays },
   { id: 'announcement', name: '赛事公告', icon: Bell },
   { id: 'donation', name: '打赏管理', icon: Gift },
@@ -18,11 +35,25 @@ const navigation = [
 
 // 数据状态
 const players = ref<any[]>([])
-const teamGroups = ref<any[]>([])
-const matches = ref<any[]>([])
-const playerPool = ref<any[]>([])
-const batchTargetTeamId = ref<number | string>('')
+const teamGroupsByMode = ref<Record<TeamMode, any[]>>({ '5v5': [], '6v6': [] })
+const matchesByMode = ref<Record<TeamMode, any[]>>({ '5v5': [], '6v6': [] })
+const playerPoolByMode = ref<Record<TeamMode, any[]>>({ '5v5': [], '6v6': [] })
+const batchTargetTeamIdByMode = ref<Record<TeamMode, number | string>>({ '5v5': '', '6v6': '' })
 const isRegistrationOpen = ref(true)
+const scheduleMode = ref<TeamMode>('5v5')
+
+const isTeamTab = computed(() => currentTab.value === 'teams' || currentTab.value === 'teams6v6')
+const currentTeamMode = computed<TeamMode>(() => currentTab.value === 'teams6v6' ? '6v6' : '5v5')
+const currentTeamModeConfig = computed(() => teamModeConfigs[currentTeamMode.value])
+const teamGroups = computed(() => teamGroupsByMode.value[currentTeamMode.value])
+const playerPool = computed(() => playerPoolByMode.value[currentTeamMode.value])
+const matches = computed(() => matchesByMode.value[scheduleMode.value])
+const batchTargetTeamId = computed<number | string>({
+  get: () => batchTargetTeamIdByMode.value[currentTeamMode.value],
+  set: (value) => {
+    batchTargetTeamIdByMode.value[currentTeamMode.value] = value
+  }
+})
 
 // 筛选状态
 const filterGroupRegistration = ref('all')
@@ -82,8 +113,9 @@ onMounted(async () => {
 const fetchData = async () => {
   await fetchRegistrationStatus()
   await fetchRegistrations()
-  await fetchTeams()
-  await fetchMatches()
+  await fetchTeams('5v5')
+  await fetchTeams('6v6')
+  await fetchMatches(scheduleMode.value)
   await fetchAnnouncement()
   await fetchDonationData()
 }
@@ -191,9 +223,9 @@ const clearRegistrations = async () => {
   })
 }
 
-const fetchTeams = async () => {
+const fetchTeams = async (mode: TeamMode = currentTeamMode.value) => {
   try {
-    const res: any = await request.get('/board/teams')
+    const res: any = await request.get(`/board/teams?mode=${mode}`)
     if (res.success) {
       // 按 groupId 分组
       const groupsMap = new Map<string, any[]>()
@@ -214,19 +246,19 @@ const fetchTeams = async () => {
           groupsArray.push({ groupId, teams })
         }
       })
-      teamGroups.value = groupsArray
-      calculateUnassignedPlayers()
+      teamGroupsByMode.value[mode] = groupsArray
+      calculateUnassignedPlayers(mode)
     }
   } catch (error) {
     console.error(error)
   }
 }
 
-const fetchMatches = async () => {
+const fetchMatches = async (mode: TeamMode = scheduleMode.value) => {
   try {
-    const res: any = await request.get('/board/matches')
+    const res: any = await request.get(`/board/matches?mode=${mode}`)
     if (res.success) {
-      matches.value = res.data.map((m: any) => ({
+      matchesByMode.value[mode] = res.data.map((m: any) => ({
         id: m.id,
         time: m.time || '待定',
         teamA: m.teamAName,
@@ -327,9 +359,9 @@ const clearAnnouncement = async () => {
 
 // ------------------------- 分队核心逻辑 -------------------------
 
-const calculateUnassignedPlayers = () => {
+const calculateUnassignedPlayers = (mode: TeamMode = currentTeamMode.value) => {
   const assignedGameIds = new Set()
-  teamGroups.value.forEach(group => {
+  teamGroupsByMode.value[mode].forEach(group => {
     group.teams.forEach((team: any) => {
       team.members?.forEach((m: any) => {
         if (m.gameId) assignedGameIds.add(m.gameId)
@@ -337,7 +369,7 @@ const calculateUnassignedPlayers = () => {
     })
   })
 
-  playerPool.value = players.value
+  playerPoolByMode.value[mode] = players.value
     .filter(p => !assignedGameIds.has(p.gameId))
     .map(p => ({
       ...p,
@@ -359,15 +391,13 @@ const allFlatTeams = computed(() => {
   return list
 })
 
-// 为队伍生成固定的 5 个槽位，优先对号入座，多的塞进空位
-const getTeamSlots = (members: any[]) => {
-  const slots = [
-    { role: 'tank', label: '重装', member: null as any },
-    { role: 'damage', label: '输出', member: null as any },
-    { role: 'damage', label: '输出', member: null as any },
-    { role: 'support', label: '支援', member: null as any },
-    { role: 'support', label: '支援', member: null as any }
-  ]
+// 为队伍生成固定槽位，优先对号入座，多的塞进空位
+const getTeamSlots = (members: any[], mode: TeamMode = currentTeamMode.value) => {
+  const slots = teamModeConfigs[mode].slots.map(role => ({
+    role,
+    label: roleMap[role] || role,
+    member: null as any
+  }))
   
   const unassignedMembers: any[] = []
   
@@ -403,11 +433,12 @@ const getPlayerSelfRanks = (gameId: string) => {
 }
 
 const createTeamGroup = async () => {
-  showConfirm('确定要添加一组新的对战组吗？', async () => {
+  const mode = currentTeamMode.value
+  showConfirm(`确定要添加一组新的 ${teamModeConfigs[mode].label} 对战组吗？`, async () => {
     try {
-      const res: any = await request.post('/admin/teams/group')
+      const res: any = await request.post('/admin/teams/group', { mode })
       if (res.success) {
-        await fetchTeams()
+        await fetchTeams(mode)
       } else {
         alert(res.message)
       }
@@ -418,11 +449,13 @@ const createTeamGroup = async () => {
 }
 
 const deleteTeamGroup = async (groupId: string) => {
+  const mode = currentTeamMode.value
   showConfirm('确定要删除这组队伍吗？该操作会将队伍解散，玩家退回选手池，并删除关联赛程。', async () => {
     try {
       const res: any = await request.delete(`/admin/teams/group/${groupId}`)
       if (res.success) {
-        await fetchData()
+        await fetchTeams(mode)
+        await fetchMatches(mode)
       } else {
         alert(res.message)
       }
@@ -436,29 +469,32 @@ const autofillModal = ref({
   show: false,
   groupId: '',
   wechatGroup: '',
+  mode: '5v5' as TeamMode,
   options: [] as string[]
 })
 
 const openAutofillModal = (groupId: string) => {
+  const mode = currentTeamMode.value
   const groups = new Set<string>()
-  playerPool.value.forEach(p => {
+  playerPoolByMode.value[mode].forEach(p => {
     if (p.wechatGroup) groups.add(p.wechatGroup)
   })
   
   autofillModal.value.options = Array.from(groups)
   autofillModal.value.wechatGroup = autofillModal.value.options.length > 0 ? autofillModal.value.options[0] : ''
   autofillModal.value.groupId = groupId
+  autofillModal.value.mode = mode
   autofillModal.value.show = true
 }
 
 const confirmAutofill = async () => {
-  const { groupId, wechatGroup } = autofillModal.value
+  const { groupId, wechatGroup, mode } = autofillModal.value
   autofillModal.value.show = false
   
   try {
-    const res: any = await request.post(`/admin/teams/group/${groupId}/autofill`, { wechatGroup })
+    const res: any = await request.post(`/admin/teams/group/${groupId}/autofill`, { wechatGroup, mode })
     if (res.success) {
-      await fetchTeams()
+      await fetchTeams(mode)
       alert('自动填充完成')
     } else {
       alert(res.message)
@@ -473,19 +509,21 @@ const closeAutofillModal = () => {
 }
 
 const saveTeamChanges = async (team: any) => {
+  const mode = currentTeamMode.value
   try {
     await request.post('/admin/teams/edit', {
       teamId: team.id,
       members: team.members,
       name: team.name
     })
-    calculateUnassignedPlayers()
+    calculateUnassignedPlayers(mode)
   } catch (error) {
     console.error('保存队伍变更失败', error)
   }
 }
 
 const editTeamName = async (team: any) => {
+  const mode = currentTeamMode.value
   const newName = window.prompt('请输入新的队伍名称：', team.name)
   if (newName !== null) {
     const trimmed = newName.trim()
@@ -498,8 +536,8 @@ const editTeamName = async (team: any) => {
         })
         if (res.success) {
           team.name = trimmed
-          await fetchTeams()
-          await fetchMatches()
+          await fetchTeams(mode)
+          await fetchMatches(mode)
           alert('修改名称成功')
         } else {
           alert(res.message || '修改名称失败')
@@ -524,13 +562,15 @@ const removePlayerFromTeam = async (teamId: number, gameId: string) => {
   })
 }
 
-// 尝试将一个玩家加入一个队伍（无视职责限制，仅保留 5 人上限）
+// 尝试将一个玩家加入一个队伍（无视职责限制，仅保留当前模式人数上限）
 const tryAddPlayerToTeam = (player: any, team: any): boolean => {
-  if (team.members.length >= 5) {
+  const mode = currentTeamMode.value
+  const maxPlayers = teamModeConfigs[mode].maxPlayers
+  if (team.members.length >= maxPlayers) {
     return false
   }
 
-  const slots = getTeamSlots(team.members)
+  const slots = getTeamSlots(team.members, mode)
   // 获取队伍当前还缺少的职位
   const missingRoles = slots.filter(s => !s.member).map(s => s.role)
   
@@ -565,7 +605,7 @@ const addPlayerToTeam = async (playerGameId: string, teamId: number | string) =>
     if (success) {
       await saveTeamChanges(team)
     } else {
-      alert(`队伍 [${team.name}] 已经满 5 人，无法继续加入`)
+      alert(`队伍 [${team.name}] 已经满 ${teamModeConfigs[currentTeamMode.value].maxPlayers} 人，无法继续加入`)
     }
   }
 }
@@ -604,20 +644,26 @@ const batchAddPlayers = async () => {
 
 // ------------------------- 赛程与比分逻辑 -------------------------
 
+const setScheduleMode = async (mode: TeamMode) => {
+  scheduleMode.value = mode
+  await fetchMatches(mode)
+}
+
 const publishSchedule = async () => {
   if (matches.value.length > 0) {
-    showConfirm('当前已有赛程安排，发布新赛程前将清空现有赛程！确定要重新发布吗？', executePublish)
+    showConfirm(`当前已有 ${teamModeConfigs[scheduleMode.value].label} 赛程安排，发布新赛程前将清空现有赛程！确定要重新发布吗？`, executePublish)
   } else {
     executePublish()
   }
 }
 
 const executePublish = async () => {
+  const mode = scheduleMode.value
   try {
-    const res: any = await request.post('/admin/matches/generate')
+    const res: any = await request.post('/admin/matches/generate', { mode })
     if (res.success) {
       alert('赛程生成发布成功！')
-      await fetchMatches()
+      await fetchMatches(mode)
     } else {
       alert(res.message)
     }
@@ -627,12 +673,13 @@ const executePublish = async () => {
 }
 
 const clearSchedule = async () => {
-  showConfirm('确定要清空当前所有赛程安排吗？这将会删除所有的对局和比分！', async () => {
+  const mode = scheduleMode.value
+  showConfirm(`确定要清空当前 ${teamModeConfigs[mode].label} 赛程安排吗？这将会删除所有的对局和比分！`, async () => {
     try {
-      const res: any = await request.delete('/admin/matches/clear')
+      const res: any = await request.delete(`/admin/matches/clear?mode=${mode}`)
       if (res.success) {
         alert('赛程清空成功！')
-        await fetchMatches()
+        await fetchMatches(mode)
       } else {
         alert(res.message)
       }
@@ -643,9 +690,11 @@ const clearSchedule = async () => {
 }
 
 const saveScheduleChanges = async () => {
+  const mode = scheduleMode.value
   showConfirm('确定要保存当前的赛程修改吗？', async () => {
     try {
       const payload = {
+        mode,
         matches: matches.value.map((m, index) => ({
           id: m.id,
           status: m.status,
@@ -655,7 +704,7 @@ const saveScheduleChanges = async () => {
       const res: any = await request.post('/admin/matches/update', payload)
       if (res.success) {
         alert('赛程变更保存成功！')
-        await fetchMatches()
+        await fetchMatches(mode)
       } else {
         alert(res.message)
       }
@@ -703,12 +752,14 @@ const closeScoreModal = () => {
 
 const saveScore = async () => {
   if (currentMatchId.value !== null) {
+    const mode = scheduleMode.value
     showConfirm('确定要保存比分吗？', async () => {
       try {
         const res: any = await request.post('/admin/matches/score', {
           matchId: currentMatchId.value,
           scoreA: scoreInputA.value,
-          scoreB: scoreInputB.value
+          scoreB: scoreInputB.value,
+          mode
         })
         
         if (res.success) {
@@ -1023,7 +1074,8 @@ const filteredOperators = computed(() => {
                 <tr>
                   <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">玩家昵称 (战网ID)</th>
                   <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">群组</th>
-                  <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">微信昵称</th>
+                  <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">抖音昵称</th>
+                  <!-- <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">微信昵称</th> -->
                   <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">首选职责</th>
                   <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">补位职责</th>
                   <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">自填段位</th>
@@ -1070,9 +1122,9 @@ const filteredOperators = computed(() => {
         </div>
         
         <!-- Teams Management -->
-        <div v-if="currentTab === 'teams'">
+        <div v-if="isTeamTab">
           <div class="flex justify-between items-center mb-6">
-            <h2 class="text-2xl font-bold text-gray-800">分队管理 (5v5)</h2>
+            <h2 class="text-2xl font-bold text-gray-800">{{ currentTeamModeConfig.title }}</h2>
             <button @click="createTeamGroup" class="flex items-center bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
               <Plus class="w-4 h-4 mr-1" /> 添加一组队伍
             </button>
@@ -1110,8 +1162,8 @@ const filteredOperators = computed(() => {
                   </div>
                 </div>
                 <ul class="space-y-2">
-                  <!-- 渲染5个职责槽位 -->
-                  <li v-for="(slot, i) in getTeamSlots(team.members)" :key="i" class="flex flex-col p-2 rounded bg-gray-50 border border-gray-100">
+                  <!-- 渲染当前模式职责槽位 -->
+                  <li v-for="(slot, i) in getTeamSlots(team.members, currentTeamMode)" :key="i" class="flex flex-col p-2 rounded bg-gray-50 border border-gray-100">
                     <div class="flex justify-between items-center w-full">
                       <div class="flex items-center">
                         <span class="inline-block w-16 text-xs font-bold text-gray-400 text-center mr-2">{{ slot.label }}</span>
@@ -1178,7 +1230,8 @@ const filteredOperators = computed(() => {
                   <tr>
                     <th scope="col" class="px-4 py-3 text-left w-10"></th>
                     <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">战网ID</th>
-                    <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">微信昵称</th>
+                    <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">抖音昵称</th>
+                    <!-- <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">微信昵称</th> -->
                     <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">职责与段位</th>
                     <th scope="col" class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
                   </tr>
@@ -1255,8 +1308,18 @@ const filteredOperators = computed(() => {
 
         <!-- Schedule Management -->
         <div v-if="currentTab === 'schedule'">
-          <div class="flex justify-between items-center mb-6">
-            <h2 class="text-2xl font-bold text-gray-800">赛程安排</h2>
+          <div class="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-6">
+            <div class="flex items-center gap-3">
+              <h2 class="text-2xl font-bold text-gray-800">赛程安排</h2>
+              <div class="flex rounded-md border border-gray-200 overflow-hidden">
+                <button @click="setScheduleMode('5v5')" :class="scheduleMode === '5v5' ? 'bg-gray-800 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'" class="px-3 py-1.5 text-sm font-medium transition-colors">
+                  5V5
+                </button>
+                <button @click="setScheduleMode('6v6')" :class="scheduleMode === '6v6' ? 'bg-gray-800 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'" class="px-3 py-1.5 text-sm font-medium transition-colors border-l border-gray-200">
+                  6V6
+                </button>
+              </div>
+            </div>
             <div class="space-x-3">
               <button @click="saveScheduleChanges" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
                 保存修改
@@ -1449,7 +1512,7 @@ const filteredOperators = computed(() => {
     <!-- Autofill Modal -->
     <div v-if="autofillModal.show" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/25 transition-opacity" style="background-color: rgba(0, 0, 0, 0.25);">
       <div class="bg-white rounded-lg shadow-xl max-w-sm w-full p-6 transform transition-all">
-        <h3 class="text-lg font-medium text-gray-900 mb-4">自动填充</h3>
+        <h3 class="text-lg font-medium text-gray-900 mb-4">{{ teamModeConfigs[autofillModal.mode].label }} 自动填充</h3>
         <p class="text-sm text-gray-500 mb-4">请选择要分配的微信群。系统将自动挑选该群的玩家填入本对战组的两支队伍中，并尽量保证双方实力均衡。</p>
         
         <div class="mb-6">

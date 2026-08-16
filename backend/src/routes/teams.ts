@@ -7,20 +7,50 @@ import redis from '../config/redis';
 
 const router = Router();
 
+type TeamMode = '5v5' | '6v6';
+
+const normalizeMode = (mode: any): TeamMode => mode === '6v6' ? '6v6' : '5v5';
+
+const getModeFromGroupId = (groupId: string | undefined): TeamMode => {
+  return groupId?.startsWith('group-6v6-') ? '6v6' : '5v5';
+};
+
+const getGroupIdParam = (groupId: string | string[] | undefined): string => {
+  return Array.isArray(groupId) ? (groupId[0] || '') : (groupId || '');
+};
+
+const getRequiredRoles = (mode: TeamMode) => {
+  return mode === '6v6'
+    ? { tank: 2, damage: 2, support: 2 }
+    : { tank: 1, damage: 2, support: 2 };
+};
+
+const clearBoardCache = (tenantId: string | undefined, mode?: TeamMode) => {
+  const keyTenant = tenantId || 'default';
+  const modes: TeamMode[] = mode ? [mode] : ['5v5', '6v6'];
+  redis.del(`board:teams:${keyTenant}`).catch(() => {});
+  redis.del(`board:matches:${keyTenant}`).catch(() => {});
+  modes.forEach(m => {
+    redis.del(`board:teams:${keyTenant}:${m}`).catch(() => {});
+    redis.del(`board:matches:${keyTenant}:${m}`).catch(() => {});
+  });
+};
+
 // 段位转换分数工具函数
 const rankToScore = (rankStr: string | undefined): number => {
   if (!rankStr || rankStr === '未定级') return 1500; // 默认白银
   const tiers: Record<string, number> = {
-    '青铜': 1000,
-    '白银': 1500,
-    '黄金': 2000,
-    '白金': 2500,
+    '青铜': 500,
+    '白银': 1000,
+    '黄金': 1500,
+    '白金': 2000,
+    '翡翠': 2500,
     '钻石': 3000,
     '大师': 3500,
     '宗师': 4000,
     '英杰': 4500
   };
-  const match = rankStr.match(/^(青铜|白银|黄金|白金|钻石|大师|宗师|英杰)(\d)?$/);
+  const match = rankStr.match(/^(青铜|白银|黄金|白金|翡翠|钻石|大师|宗师|英杰)(\d)?$/);
   if (!match) return 1500;
   const tier = match[1] as string;
   const sub = match[2] ? parseInt(match[2], 10) : 3; // 默认给个中间分段3
@@ -43,8 +73,9 @@ const getPlayerScore = (player: any, role: string): number => {
 
 // 1. 创建一组空队伍（两个队）
 router.post('/group', authMiddleware, async (req: Request, res: Response) => {
+  const mode = normalizeMode(req.body?.mode);
   const periodId = 'global';
-  const groupId = `group-${Date.now()}`;
+  const groupId = `group-${mode}-${Date.now()}`;
   const version = `v1.0-${Date.now()}`;
 
   try {
@@ -57,9 +88,9 @@ router.post('/group', authMiddleware, async (req: Request, res: Response) => {
       [periodId, req.tenantId, groupId, '队伍 B', version, '[]']
     );
 
-    redis.del(`board:teams:${req.tenantId}`).catch(() => {});
+    clearBoardCache(req.tenantId, mode);
 
-    return res.status(200).json({ success: true, code: 200, message: '队伍组创建成功', data: { groupId, teams: [t1.rows[0], t2.rows[0]] } });
+    return res.status(200).json({ success: true, code: 200, message: '队伍组创建成功', data: { groupId, mode, teams: [t1.rows[0], t2.rows[0]] } });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ success: false, code: 500, message: '服务器内部错误', data: null });
@@ -68,7 +99,8 @@ router.post('/group', authMiddleware, async (req: Request, res: Response) => {
 
 // 2. 删除一组队伍
 router.delete('/group/:groupId', authMiddleware, async (req: Request, res: Response) => {
-  const { groupId } = req.params;
+  const groupId = getGroupIdParam(req.params.groupId);
+  const mode = getModeFromGroupId(groupId);
   try {
     // 级联删除相关的赛程
     await pool.query(`
@@ -79,8 +111,7 @@ router.delete('/group/:groupId', authMiddleware, async (req: Request, res: Respo
     `, [groupId, req.tenantId]);
     await pool.query('DELETE FROM teams WHERE group_id = $1 AND tenant_id = $2', [groupId, req.tenantId]);
     
-    redis.del(`board:teams:${req.tenantId}`).catch(() => {});
-    redis.del(`board:matches:${req.tenantId}`).catch(() => {});
+    clearBoardCache(req.tenantId, mode);
 
     return res.status(200).json({ success: true, code: 200, message: '队伍组删除成功', data: null });
   } catch (error) {
@@ -91,8 +122,9 @@ router.delete('/group/:groupId', authMiddleware, async (req: Request, res: Respo
 
 // 3. 自动填充一组队伍（基于 1重装 2输出 2支援 的职责要求，并加入群号过滤和蛇形均衡分组）
 router.post('/group/:groupId/autofill', authMiddleware, async (req: Request, res: Response) => {
-  const { groupId } = req.params;
+  const groupId = getGroupIdParam(req.params.groupId);
   const { wechatGroup } = req.body;
+  const mode = getModeFromGroupId(groupId);
 
   try {
     const teamsRes = await pool.query('SELECT * FROM teams WHERE group_id = $1 AND tenant_id = $2 ORDER BY id ASC', [groupId, req.tenantId]);
@@ -104,9 +136,10 @@ router.post('/group/:groupId/autofill', authMiddleware, async (req: Request, res
     const regRes = await pool.query('SELECT id, battle_tag, primary_roles, secondary_roles, self_ranks, wechat_group FROM registrations WHERE tenant_id = $1', [req.tenantId]);
     
     // 只从有效的分组队伍中统计已分配的玩家，保持与前端未分配池逻辑一致
-    const allTeamsRes = await pool.query('SELECT members FROM teams WHERE group_id IS NOT NULL AND tenant_id = $1', [req.tenantId]);
+    const allTeamsRes = await pool.query('SELECT group_id, members FROM teams WHERE group_id IS NOT NULL AND tenant_id = $1', [req.tenantId]);
     const assignedGameIds = new Set<string>();
     allTeamsRes.rows.forEach(t => {
+      if (getModeFromGroupId(t.group_id) !== mode) return;
       let members = t.members;
       if (typeof members === 'string') {
         try { members = JSON.parse(members); } catch (e) { members = []; }
@@ -149,7 +182,7 @@ router.post('/group/:groupId/autofill', authMiddleware, async (req: Request, res
         };
       });
 
-    const REQUIRED_ROLES = { tank: 1, damage: 2, support: 2 };
+    const REQUIRED_ROLES = getRequiredRoles(mode);
     
     const teamA = teams[0];
     const teamB = teams[1];
@@ -233,7 +266,7 @@ router.post('/group/:groupId/autofill', authMiddleware, async (req: Request, res
     await pool.query('UPDATE teams SET members = $1 WHERE id = $2 AND tenant_id = $3', [JSON.stringify(membersA), teamA.id, req.tenantId]);
     await pool.query('UPDATE teams SET members = $1 WHERE id = $2 AND tenant_id = $3', [JSON.stringify(membersB), teamB.id, req.tenantId]);
 
-    redis.del(`board:teams:${req.tenantId}`).catch(() => {});
+    clearBoardCache(req.tenantId, mode);
 
     return res.status(200).json({ success: true, code: 200, message: '自动填充完成', data: null });
   } catch (error) {
@@ -252,6 +285,9 @@ router.post('/edit', authMiddleware, async (req: Request, res: Response) => {
   const membersData = members || [];
 
   try {
+    const teamRes = await pool.query('SELECT group_id FROM teams WHERE id = $1 AND tenant_id = $2', [teamId, req.tenantId]);
+    const mode = getModeFromGroupId(teamRes.rows[0]?.group_id);
+
     if (name) {
       await pool.query(
         'UPDATE teams SET members = $1, name = $2 WHERE id = $3 AND tenant_id = $4',
@@ -264,7 +300,7 @@ router.post('/edit', authMiddleware, async (req: Request, res: Response) => {
       );
     }
 
-    redis.del(`board:teams:${req.tenantId}`).catch(() => {});
+    clearBoardCache(req.tenantId, mode);
 
     return res.status(200).json({ success: true, code: 200, message: '队伍更新成功', data: null });
   } catch (error) {

@@ -27,7 +27,7 @@ const footerData = ref({
   adminContacts: []
 })
 
-const rankTiers = ['青铜', '白银', '黄金', '白金', '钻石', '大师', '宗师', '英杰']
+const rankTiers = ['青铜', '白银', '黄金', '白金', '翡翠', '钻石', '大师', '宗师', '英杰']
 const rankOptions = rankTiers.flatMap(tier => [5, 4, 3, 2, 1].map(div => `${tier}${div}`))
 
 onMounted(async () => {
@@ -232,19 +232,29 @@ const submitRegistration = async () => {
 
             <div>
               <label for="wechat" class="block text-sm font-medium text-gray-700">
-                微信昵称
+                <!-- 微信昵称 -->
+                抖音昵称
               </label>
               <div class="mt-1 flex space-x-2">
                 <select v-model="wechatGroup" class="block w-24 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-orange-500 focus:border-orange-500 sm:text-sm">
                   <option value="一群">一群</option>
                   <option value="二群">二群</option>
                 </select>
-                <input
+                <!-- <input
                   id="wechat"
                   v-model="wechatId"
                   name="wechat"
                   type="text"
                   placeholder="请输入您的微信昵称"
+                  required
+                  class="appearance-none block flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-orange-500 focus:border-orange-500 sm:text-sm"
+                /> -->
+                <input
+                  id="wechat"
+                  v-model="wechatId"
+                  name="wechat"
+                  type="text"
+                  placeholder="请输入您的抖音昵称"
                   required
                   class="appearance-none block flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-orange-500 focus:border-orange-500 sm:text-sm"
                 />

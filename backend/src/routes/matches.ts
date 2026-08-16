@@ -7,18 +7,49 @@ import redis from '../config/redis';
 
 const router = Router();
 
+type TeamMode = '5v5' | '6v6';
+
+const normalizeMode = (mode: any): TeamMode => mode === '6v6' ? '6v6' : '5v5';
+
+const getModeFromGroupId = (groupId: string | undefined): TeamMode => {
+  return groupId?.startsWith('group-6v6-') ? '6v6' : '5v5';
+};
+
+const clearMatchesCache = (tenantId: string | undefined, mode?: TeamMode) => {
+  const keyTenant = tenantId || 'default';
+  const modes: TeamMode[] = mode ? [mode] : ['5v5', '6v6'];
+  redis.del(`board:matches:${keyTenant}`).catch(() => {});
+  modes.forEach(m => {
+    redis.del(`board:matches:${keyTenant}:${m}`).catch(() => {});
+  });
+};
+
+const getTeamIdsByMode = async (tenantId: string | undefined, mode: TeamMode) => {
+  const teamsResult = await pool.query(
+    'SELECT id, name, group_id FROM teams WHERE group_id IS NOT NULL AND tenant_id = $1',
+    [tenantId]
+  );
+  const teams = teamsResult.rows.filter(t => getModeFromGroupId(t.group_id) === mode);
+  const teamIds = teams.map(t => t.id);
+  return { teams, teamIds };
+};
+
+const deleteMatchesByTeamIds = async (tenantId: string | undefined, teamIds: number[]) => {
+  if (teamIds.length === 0) return;
+  await pool.query(
+    'DELETE FROM matches WHERE tenant_id = $1 AND (team1_id = ANY($2::int[]) OR team2_id = ANY($2::int[]))',
+    [tenantId, teamIds]
+  );
+};
+
 // 生成赛程
 router.post('/generate', authMiddleware, async (req: Request, res: Response) => {
+  const mode = normalizeMode(req.body?.mode || req.query?.mode);
   const periodId = 'global';
 
   try {
-    // 1. 获取所有分组队伍
-    const teamsResult = await pool.query(
-      'SELECT id, name, group_id FROM teams WHERE group_id IS NOT NULL AND tenant_id = $1',
-      [req.tenantId]
-    );
-
-    const teams = teamsResult.rows;
+    // 1. 获取当前模式的所有分组队伍
+    const { teams, teamIds } = await getTeamIdsByMode(req.tenantId, mode);
 
     if (teams.length < 2) {
       const response: ApiResponse = {
@@ -37,7 +68,7 @@ router.post('/generate', authMiddleware, async (req: Request, res: Response) => 
       groupsMap.get(t.group_id)?.push(t);
     });
 
-    await pool.query('DELETE FROM matches WHERE tenant_id = $1', [req.tenantId]);
+    await deleteMatchesByTeamIds(req.tenantId, teamIds);
 
     const matches = [];
 
@@ -58,7 +89,7 @@ router.post('/generate', authMiddleware, async (req: Request, res: Response) => 
       }
     }
 
-    redis.del(`board:matches:${req.tenantId}`).catch(() => {});
+    clearMatchesCache(req.tenantId, mode);
 
     const response: ApiResponse = {
       success: true,
@@ -82,9 +113,11 @@ router.post('/generate', authMiddleware, async (req: Request, res: Response) => 
 
 // 清空赛程
 router.delete('/clear', authMiddleware, async (req: Request, res: Response) => {
+  const mode = normalizeMode(req.query?.mode || req.body?.mode);
   try {
-    await pool.query('DELETE FROM matches WHERE tenant_id = $1', [req.tenantId]);
-    redis.del(`board:matches:${req.tenantId}`).catch(() => {});
+    const { teamIds } = await getTeamIdsByMode(req.tenantId, mode);
+    await deleteMatchesByTeamIds(req.tenantId, teamIds);
+    clearMatchesCache(req.tenantId, mode);
     return res.status(200).json({ success: true, code: 200, message: '赛程清空成功', data: null });
   } catch (error) {
     console.error('Clear matches error:', error);
@@ -95,6 +128,7 @@ router.delete('/clear', authMiddleware, async (req: Request, res: Response) => {
 // 更新赛程顺序和状态
 router.post('/update', authMiddleware, async (req: Request, res: Response) => {
   const { matches } = req.body; // Array of { id, status, matchOrder }
+  const mode = normalizeMode(req.body?.mode || req.query?.mode);
 
   if (!matches || !Array.isArray(matches)) {
     return res.status(400).json({ success: false, code: 400, message: '无效的参数', data: null });
@@ -114,7 +148,7 @@ router.post('/update', authMiddleware, async (req: Request, res: Response) => {
     }
     
     await pool.query('COMMIT');
-    redis.del(`board:matches:${req.tenantId}`).catch(() => {});
+    clearMatchesCache(req.tenantId, mode);
     return res.status(200).json({ success: true, code: 200, message: '赛程更新成功', data: null });
   } catch (error) {
     await pool.query('ROLLBACK');
@@ -126,6 +160,7 @@ router.post('/update', authMiddleware, async (req: Request, res: Response) => {
 // 录入比分
 router.post('/score', authMiddleware, async (req: Request, res: Response) => {
   const { matchId, scoreA, scoreB } = req.body;
+  const mode = normalizeMode(req.body?.mode || req.query?.mode);
 
   if (matchId === undefined || scoreA === undefined || scoreB === undefined) {
     const response: ApiResponse = {
@@ -143,7 +178,7 @@ router.post('/score', authMiddleware, async (req: Request, res: Response) => {
       [scoreA, scoreB, 'completed', matchId, req.tenantId]
     );
 
-    redis.del(`board:matches:${req.tenantId}`).catch(() => {});
+    clearMatchesCache(req.tenantId, mode);
 
     const response: ApiResponse = {
       success: true,

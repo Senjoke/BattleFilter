@@ -5,7 +5,7 @@ const board_service_1 = require("../services/board.service");
 class BoardController {
     static async getTeams(req, res) {
         try {
-            const data = await board_service_1.BoardService.getTeams(req.tenantId || 'default');
+            const data = await board_service_1.BoardService.getTeams(req.tenantId || 'default', req.query.mode);
             const response = {
                 success: true, code: 200, message: '获取队伍列表成功', data
             };
@@ -18,7 +18,7 @@ class BoardController {
     }
     static async getMatches(req, res) {
         try {
-            const data = await board_service_1.BoardService.getMatches(req.tenantId || 'default');
+            const data = await board_service_1.BoardService.getMatches(req.tenantId || 'default', req.query.mode);
             const response = {
                 success: true, code: 200, message: '获取赛程列表成功', data
             };

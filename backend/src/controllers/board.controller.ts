@@ -5,7 +5,7 @@ import { ApiResponse } from '../../../shared/types';
 export class BoardController {
   static async getTeams(req: Request, res: Response) {
     try {
-      const data = await BoardService.getTeams(req.tenantId || 'default');
+      const data = await BoardService.getTeams(req.tenantId || 'default', req.query.mode);
       const response: ApiResponse = {
         success: true, code: 200, message: '获取队伍列表成功', data
       };
@@ -18,7 +18,7 @@ export class BoardController {
 
   static async getMatches(req: Request, res: Response) {
     try {
-      const data = await BoardService.getMatches(req.tenantId || 'default');
+      const data = await BoardService.getMatches(req.tenantId || 'default', req.query.mode);
       const response: ApiResponse = {
         success: true, code: 200, message: '获取赛程列表成功', data
       };
