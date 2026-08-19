@@ -13,7 +13,7 @@ request.interceptors.request.use(
     if (!config.headers) {
       config.headers = {} as any;
     }
-    if (token) {
+    if (token && !config.headers['Authorization']) {
       config.headers['Authorization'] = `Bearer ${token}`;
     }
     // 注入多租户 ID

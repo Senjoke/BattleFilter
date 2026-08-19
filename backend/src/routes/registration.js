@@ -64,12 +64,18 @@ router.post('/registrations', async (req, res) => {
     }
     const { battleTag, wechatId, wechatGroup, primaryRoles, secondaryRoles, selfRanks } = req.body;
     if (!battleTag || !wechatId || !wechatGroup || !primaryRoles || primaryRoles.length === 0) {
-        const response = {
-            success: false,
-            code: 400,
-            message: '参数错误，缺少战网标识、微信昵称、群组或首选职责',
-            data: null
+        const response: ApiResponse = {
+          success: false,
+          code: 400,
+          message: '参数错误，缺少战网标识、微信昵称、群组或首选职责',
+          data: null
         };
+        // const response = {
+        //     success: false,
+        //     code: 400,
+        //     message: '参数错误，缺少战网标识、抖音昵称、群组或首选职责',
+        //     data: null
+        // };
         return res.status(400).json(response);
     }
     const periodId = 'global';

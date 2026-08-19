@@ -17,6 +17,7 @@ const showNavBar = computed(() => route.name !== 'admin')
           <div class="hidden sm:ml-8 sm:flex sm:space-x-4 sm:items-center">
             <router-link to="/" class="text-gray-300 hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium transition-colors" exact-active-class="bg-gray-800 text-white font-semibold">报名大厅</router-link>
             <router-link to="/board" class="text-gray-300 hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium transition-colors" exact-active-class="bg-gray-800 text-white font-semibold">赛事看板</router-link>
+            <router-link to="/auction-login" class="text-gray-300 hover:bg-gray-700 hover:text-white px-3 py-2 rounded-md text-sm font-medium transition-colors" exact-active-class="bg-gray-800 text-white font-semibold">拍卖登陆</router-link>
           </div>
         </div>
         <div class="flex items-center">
@@ -29,6 +30,7 @@ const showNavBar = computed(() => route.name !== 'admin')
     <div class="sm:hidden bg-gray-800 border-t border-gray-700 flex justify-center space-x-2 p-2">
       <router-link to="/" class="text-gray-300 hover:bg-gray-700 hover:text-white px-4 py-2 rounded-md text-sm font-medium transition-colors" exact-active-class="bg-gray-900 text-white">报名大厅</router-link>
       <router-link to="/board" class="text-gray-300 hover:bg-gray-700 hover:text-white px-4 py-2 rounded-md text-sm font-medium transition-colors" exact-active-class="bg-gray-900 text-white">赛事看板</router-link>
+      <router-link to="/auction-login" class="text-gray-300 hover:bg-gray-700 hover:text-white px-4 py-2 rounded-md text-sm font-medium transition-colors" exact-active-class="bg-gray-900 text-white">拍卖登陆</router-link>
     </div>
   </nav>
   

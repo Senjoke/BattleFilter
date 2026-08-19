@@ -1,11 +1,16 @@
 import pool from '../config/db';
 import redis from '../config/redis';
 
-type TeamMode = '5v5' | '6v6';
+type TeamMode = '5v5' | '6v6' | 'auction';
 
-const normalizeMode = (mode: any): TeamMode => mode === '6v6' ? '6v6' : '5v5';
+const normalizeMode = (mode: any): TeamMode => {
+  if (mode === '6v6') return '6v6';
+  if (mode === 'auction') return 'auction';
+  return '5v5';
+};
 
 const getModeFromGroupId = (groupId: string | undefined): TeamMode => {
+  if (groupId?.startsWith('group-auction-')) return 'auction';
   return groupId?.startsWith('group-6v6-') ? '6v6' : '5v5';
 };
 

@@ -7,6 +7,7 @@ import registrationRouter from './routes/registration';
 import teamsRouter from './routes/teams';
 import matchesRouter from './routes/matches';
 import boardRouter from './routes/board';
+import auctionRouter from './routes/auction';
 import announcementsRouter from './routes/announcements';
 import metricsRouter from './routes/metrics';
 import footerRouter from './routes/footer';
@@ -43,6 +44,9 @@ app.use('/api/admin/matches', matchesRouter); // POST /api/admin/matches/generat
 
 // Board
 app.use('/api/board', boardRouter); // GET /api/board/teams, GET /api/board/matches
+
+// Auction
+app.use('/api', auctionRouter);
 
 // Announcements
 app.use('/api/announcements', announcementsRouter);

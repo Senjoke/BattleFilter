@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import request from '../api/request'
 import { onMounted } from 'vue'
 import SponsorFooter from '../components/SponsorFooter.vue'
+import { formatBeijingDateTime } from '../utils/beijingTime'
 
 const router = useRouter()
 const battlenetId = ref('')
@@ -189,7 +190,7 @@ const submitRegistration = async () => {
             <h3 class="text-sm font-bold text-yellow-800">{{ announcement.title }}</h3>
             <div class="mt-2 text-sm text-yellow-700 whitespace-pre-wrap">{{ announcement.content }}</div>
             <div v-if="announcement.start_time" class="mt-3 text-xs font-medium text-yellow-800 bg-yellow-100 inline-block px-2 py-1 rounded">
-              赛事开始时间：{{ new Date(announcement.start_time).toLocaleString() }}
+              赛事开始时间：{{ formatBeijingDateTime(announcement.start_time) }}
             </div>
           </div>
         </div>
@@ -232,15 +233,15 @@ const submitRegistration = async () => {
 
             <div>
               <label for="wechat" class="block text-sm font-medium text-gray-700">
-                <!-- 微信昵称 -->
-                抖音昵称
+                微信昵称
+                <!-- 抖音昵称 -->
               </label>
               <div class="mt-1 flex space-x-2">
                 <select v-model="wechatGroup" class="block w-24 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-orange-500 focus:border-orange-500 sm:text-sm">
                   <option value="一群">一群</option>
                   <option value="二群">二群</option>
                 </select>
-                <!-- <input
+                <input
                   id="wechat"
                   v-model="wechatId"
                   name="wechat"
@@ -248,8 +249,8 @@ const submitRegistration = async () => {
                   placeholder="请输入您的微信昵称"
                   required
                   class="appearance-none block flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-orange-500 focus:border-orange-500 sm:text-sm"
-                /> -->
-                <input
+                />
+                <!-- <input
                   id="wechat"
                   v-model="wechatId"
                   name="wechat"
@@ -257,7 +258,7 @@ const submitRegistration = async () => {
                   placeholder="请输入您的抖音昵称"
                   required
                   class="appearance-none block flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-orange-500 focus:border-orange-500 sm:text-sm"
-                />
+                /> -->
               </div>
             </div>
 
@@ -403,7 +404,7 @@ const submitRegistration = async () => {
           <div class="font-bold mb-2">{{ announcement.title }}</div>
           <div>{{ announcement.content }}</div>
           <div v-if="announcement.start_time" class="mt-4 text-xs font-medium text-yellow-800 bg-yellow-100 inline-block px-2 py-1 rounded">
-            赛事开始时间：{{ new Date(announcement.start_time).toLocaleString() }}
+            赛事开始时间：{{ formatBeijingDateTime(announcement.start_time) }}
           </div>
         </div>
         <div class="flex justify-end space-x-3 mt-auto pt-4 border-t border-gray-100">

@@ -11,6 +11,7 @@ const registration_1 = __importDefault(require("./routes/registration"));
 const teams_1 = __importDefault(require("./routes/teams"));
 const matches_1 = __importDefault(require("./routes/matches"));
 const board_1 = __importDefault(require("./routes/board"));
+const auction_1 = __importDefault(require("./routes/auction"));
 const announcements_1 = __importDefault(require("./routes/announcements"));
 const metrics_1 = __importDefault(require("./routes/metrics"));
 const footer_1 = __importDefault(require("./routes/footer"));
@@ -36,6 +37,8 @@ app.use('/api/admin/teams', teams_1.default); // POST /api/admin/teams/generate
 app.use('/api/admin/matches', matches_1.default); // POST /api/admin/matches/generate
 // Board
 app.use('/api/board', board_1.default); // GET /api/board/teams, GET /api/board/matches
+// Auction
+app.use('/api', auction_1.default);
 // Announcements
 app.use('/api/announcements', announcements_1.default);
 // Footer

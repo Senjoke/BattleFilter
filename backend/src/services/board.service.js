@@ -6,8 +6,16 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.BoardService = void 0;
 const db_1 = __importDefault(require("../config/db"));
 const redis_1 = __importDefault(require("../config/redis"));
-const normalizeMode = (mode) => mode === '6v6' ? '6v6' : '5v5';
+const normalizeMode = (mode) => {
+    if (mode === '6v6')
+        return '6v6';
+    if (mode === 'auction')
+        return 'auction';
+    return '5v5';
+};
 const getModeFromGroupId = (groupId) => {
+    if (groupId?.startsWith('group-auction-'))
+        return 'auction';
     return groupId?.startsWith('group-6v6-') ? '6v6' : '5v5';
 };
 class BoardService {

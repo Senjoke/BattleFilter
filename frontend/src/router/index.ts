@@ -3,6 +3,8 @@ import RegistrationView from '../views/RegistrationView.vue'
 import AdminView from '../views/AdminView.vue'
 import LoginView from '../views/LoginView.vue'
 import BoardView from '../views/BoardView.vue'
+import AuctionLoginView from '../views/AuctionLoginView.vue'
+import AuctionView from '../views/AuctionView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -27,6 +29,16 @@ const router = createRouter({
       path: '/board',
       name: 'board',
       component: BoardView
+    },
+    {
+      path: '/auction-login',
+      name: 'auction-login',
+      component: AuctionLoginView
+    },
+    {
+      path: '/auction',
+      name: 'auction',
+      component: AuctionView
     }
   ]
 })

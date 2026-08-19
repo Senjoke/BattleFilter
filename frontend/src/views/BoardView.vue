@@ -21,7 +21,7 @@
             <h3 class="text-lg font-bold text-yellow-800">{{ announcement.title }}</h3>
             <div class="mt-2 text-sm text-yellow-700 whitespace-pre-wrap">{{ announcement.content }}</div>
             <div v-if="announcement.start_time" class="mt-4 text-sm font-medium text-yellow-800 bg-yellow-100 inline-block px-3 py-1.5 rounded">
-              赛事开始时间：{{ new Date(announcement.start_time).toLocaleString() }}
+              赛事开始时间：{{ formatBeijingDateTime(announcement.start_time) }}
             </div>
           </div>
         </div>
@@ -65,8 +65,8 @@
             </div>
           </div>
 
-          <!-- 赛程展示区 -->
-          <div>
+          <!-- 拍卖分队只发布队伍阵容，暂不展示赛程区。 -->
+          <div v-if="modeInfo.mode !== 'auction'">
             <h3 class="text-lg font-bold text-gray-900 mb-4">赛程安排</h3>
             <div v-if="schedulesByMode[modeInfo.mode].length > 0" class="space-y-4">
               <div v-for="match in schedulesByMode[modeInfo.mode]" :key="match.id" class="flex flex-col sm:flex-row items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-lg">
@@ -129,12 +129,14 @@ import { ref, onMounted } from 'vue';
 import { Megaphone } from 'lucide-vue-next';
 import request from '../api/request';
 import SponsorFooter from '../components/SponsorFooter.vue'
+import { formatBeijingDateTime } from '../utils/beijingTime'
 
-type TeamMode = '5v5' | '6v6';
+type TeamMode = '5v5' | '6v6' | 'auction';
 
 const boardModes: { mode: TeamMode; label: string }[] = [
   { mode: '5v5', label: '5V5' },
-  { mode: '6v6', label: '6V6' }
+  { mode: '6v6', label: '6V6' },
+  { mode: 'auction', label: '拍卖分队' }
 ];
 
 const roleMap: Record<string, string> = {
@@ -170,9 +172,9 @@ interface Match {
 }
 
 // 响应式数据
-const teamsByMode = ref<Record<TeamMode, Team[]>>({ '5v5': [], '6v6': [] });
-const schedulesByMode = ref<Record<TeamMode, Match[]>>({ '5v5': [], '6v6': [] });
-const selectedGroupIds = ref<Record<TeamMode, string>>({ '5v5': 'all', '6v6': 'all' });
+const teamsByMode = ref<Record<TeamMode, Team[]>>({ '5v5': [], '6v6': [], auction: [] });
+const schedulesByMode = ref<Record<TeamMode, Match[]>>({ '5v5': [], '6v6': [], auction: [] });
+const selectedGroupIds = ref<Record<TeamMode, string>>({ '5v5': 'all', '6v6': 'all', auction: 'all' });
 const announcement = ref<any>(null);
 const registeredPlayers = ref<any[]>([]);
 
@@ -231,9 +233,13 @@ const fetchModeBoardData = async (mode: TeamMode) => {
     }));
   }
 
-  const matchesRes: any = await request.get(`/board/matches?mode=${mode}`);
-  if (matchesRes.success) {
-    schedulesByMode.value[mode] = matchesRes.data.map(mapMatch);
+  if (mode !== 'auction') {
+    const matchesRes: any = await request.get(`/board/matches?mode=${mode}`);
+    if (matchesRes.success) {
+      schedulesByMode.value[mode] = matchesRes.data.map(mapMatch);
+    }
+  } else {
+    schedulesByMode.value[mode] = [];
   }
 };
 

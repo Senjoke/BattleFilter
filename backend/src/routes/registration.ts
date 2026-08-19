@@ -70,6 +70,12 @@ router.post('/registrations', async (req: Request, res: Response) => {
       message: '参数错误，缺少战网标识、微信昵称、群组或首选职责',
       data: null
     };
+    // const response: ApiResponse = {
+    //   success: false,
+    //   code: 400,
+    //   message: '参数错误，缺少战网标识、抖音昵称、群组或首选职责',
+    //   data: null
+    // };
     return res.status(400).json(response);
   }
 

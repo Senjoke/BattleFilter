@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
-import { Users, LayoutGrid, CalendarDays, Menu, X, Trash2, Wand2, Plus, Bell, ArrowUp, ArrowDown, LogOut, ExternalLink, Edit2, Gift } from 'lucide-vue-next'
+import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
+import { Users, LayoutGrid, CalendarDays, Menu, X, Trash2, Wand2, Plus, Bell, ArrowUp, ArrowDown, LogOut, ExternalLink, Edit2, Gift, Gavel, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import request from '../api/request'
+import AuctionBoard from '../components/AuctionBoard.vue'
+import { fromBeijingDateTimeInput, toBeijingDateTimeInput } from '../utils/beijingTime'
 
 const router = useRouter()
 const isMobileMenuOpen = ref(false)
+const isSidebarCollapsed = ref(false)
 const currentTab = ref('teams') // 默认进入分队管理
 type TeamMode = '5v5' | '6v6'
+type ScheduleMode = TeamMode | 'auction'
 
 const teamModeConfigs: Record<TeamMode, { label: string; title: string; maxPlayers: number; slots: string[] }> = {
   '5v5': {
@@ -23,11 +27,17 @@ const teamModeConfigs: Record<TeamMode, { label: string; title: string; maxPlaye
     slots: ['tank', 'tank', 'damage', 'damage', 'support', 'support']
   }
 }
+const scheduleModeConfigs: Record<ScheduleMode, { label: string }> = {
+  '5v5': { label: '5V5' },
+  '6v6': { label: '6V6' },
+  auction: { label: '拍卖分队' }
+}
 
 const navigation = [
   { id: 'registration', name: '报名大厅', icon: Users },
   { id: 'teams', name: '分队管理（5V5）', icon: LayoutGrid },
   { id: 'teams6v6', name: '分队管理（6V6）', icon: LayoutGrid },
+  { id: 'auction', name: '拍卖分队', icon: Gavel },
   { id: 'schedule', name: '赛程安排', icon: CalendarDays },
   { id: 'announcement', name: '赛事公告', icon: Bell },
   { id: 'donation', name: '打赏管理', icon: Gift },
@@ -36,11 +46,11 @@ const navigation = [
 // 数据状态
 const players = ref<any[]>([])
 const teamGroupsByMode = ref<Record<TeamMode, any[]>>({ '5v5': [], '6v6': [] })
-const matchesByMode = ref<Record<TeamMode, any[]>>({ '5v5': [], '6v6': [] })
+const matchesByMode = ref<Record<ScheduleMode, any[]>>({ '5v5': [], '6v6': [], auction: [] })
 const playerPoolByMode = ref<Record<TeamMode, any[]>>({ '5v5': [], '6v6': [] })
 const batchTargetTeamIdByMode = ref<Record<TeamMode, number | string>>({ '5v5': '', '6v6': '' })
 const isRegistrationOpen = ref(true)
-const scheduleMode = ref<TeamMode>('5v5')
+const scheduleMode = ref<ScheduleMode>('5v5')
 
 const isTeamTab = computed(() => currentTab.value === 'teams' || currentTab.value === 'teams6v6')
 const currentTeamMode = computed<TeamMode>(() => currentTab.value === 'teams6v6' ? '6v6' : '5v5')
@@ -116,6 +126,7 @@ const fetchData = async () => {
   await fetchTeams('5v5')
   await fetchTeams('6v6')
   await fetchMatches(scheduleMode.value)
+  await fetchAuctionState()
   await fetchAnnouncement()
   await fetchDonationData()
 }
@@ -254,7 +265,7 @@ const fetchTeams = async (mode: TeamMode = currentTeamMode.value) => {
   }
 }
 
-const fetchMatches = async (mode: TeamMode = scheduleMode.value) => {
+const fetchMatches = async (mode: ScheduleMode = scheduleMode.value) => {
   try {
     const res: any = await request.get(`/board/matches?mode=${mode}`)
     if (res.success) {
@@ -313,7 +324,7 @@ const fetchAnnouncement = async () => {
       announcement.value = {
         title: res.data.title || '',
         content: res.data.content || '',
-        startTime: res.data.start_time ? new Date(res.data.start_time).toISOString().slice(0, 16) : ''
+        startTime: toBeijingDateTimeInput(res.data.start_time)
       }
     }
   } catch (error) {
@@ -327,7 +338,7 @@ const saveAnnouncement = async () => {
       const payload = {
         title: announcement.value.title,
         content: announcement.value.content,
-        startTime: announcement.value.startTime ? new Date(announcement.value.startTime).toISOString() : null
+        startTime: fromBeijingDateTimeInput(announcement.value.startTime)
       }
       const res: any = await request.post('/announcements', payload)
       if (res.success) {
@@ -644,25 +655,26 @@ const batchAddPlayers = async () => {
 
 // ------------------------- 赛程与比分逻辑 -------------------------
 
-const setScheduleMode = async (mode: TeamMode) => {
+const setScheduleMode = async (mode: ScheduleMode) => {
   scheduleMode.value = mode
   await fetchMatches(mode)
 }
 
-const publishSchedule = async () => {
-  if (matches.value.length > 0) {
-    showConfirm(`当前已有 ${teamModeConfigs[scheduleMode.value].label} 赛程安排，发布新赛程前将清空现有赛程！确定要重新发布吗？`, executePublish)
+const publishSchedule = async (mode: ScheduleMode = scheduleMode.value) => {
+  await fetchMatches(mode)
+  const currentMatches = matchesByMode.value[mode] || []
+  if (currentMatches.length > 0) {
+    showConfirm(`当前已有 ${scheduleModeConfigs[mode].label} 赛程安排，发布新赛程前将清空现有赛程！确定要重新发布吗？`, () => executePublish(mode))
   } else {
-    executePublish()
+    executePublish(mode)
   }
 }
 
-const executePublish = async () => {
-  const mode = scheduleMode.value
+const executePublish = async (mode: ScheduleMode = scheduleMode.value) => {
   try {
     const res: any = await request.post('/admin/matches/generate', { mode })
     if (res.success) {
-      alert('赛程生成发布成功！')
+      alert(mode === 'auction' ? '队伍信息发布成功！' : '赛程生成发布成功！')
       await fetchMatches(mode)
     } else {
       alert(res.message)
@@ -672,13 +684,15 @@ const executePublish = async () => {
   }
 }
 
-const clearSchedule = async () => {
-  const mode = scheduleMode.value
-  showConfirm(`确定要清空当前 ${teamModeConfigs[mode].label} 赛程安排吗？这将会删除所有的对局和比分！`, async () => {
+const clearSchedule = async (mode: ScheduleMode = scheduleMode.value) => {
+  const message = mode === 'auction'
+    ? '确定要删除已发布的拍卖队伍信息吗？这不会影响当前拍卖进度。'
+    : `确定要清空当前 ${scheduleModeConfigs[mode].label} 赛程安排吗？这将会删除所有的对局和比分！`
+  showConfirm(message, async () => {
     try {
       const res: any = await request.delete(`/admin/matches/clear?mode=${mode}`)
       if (res.success) {
-        alert('赛程清空成功！')
+        alert(mode === 'auction' ? '已发布队伍信息删除成功！' : '赛程清空成功！')
         await fetchMatches(mode)
       } else {
         alert(res.message)
@@ -688,6 +702,11 @@ const clearSchedule = async () => {
     }
   })
 }
+
+const publishAuctionTeams = () => {
+  showConfirm('确定要发布当前拍卖队伍信息吗？重复发布会覆盖之前发布的拍卖队伍。', () => executePublish('auction'))
+}
+const clearPublishedAuctionTeams = () => clearSchedule('auction')
 
 const saveScheduleChanges = async () => {
   const mode = scheduleMode.value
@@ -780,6 +799,201 @@ const saveScore = async () => {
     })
   }
 }
+
+// ------------------------- 拍卖分队逻辑 -------------------------
+const auctionState = ref<any>(null)
+const auctionTargetTeamCount = ref(0)
+const selectedCaptainTier = ref('')
+const isAuctionLoading = ref(false)
+const auctionRefreshTimer = ref<number | null>(null)
+
+const auctionRankOptions = computed(() => auctionState.value?.rankOptions || [])
+const selectedCaptainOption = computed(() => auctionRankOptions.value.find((option: any) => option.tier === selectedCaptainTier.value))
+const auctionHasSession = computed(() => Boolean(auctionState.value?.session))
+
+const applyAuctionState = (state: any) => {
+  auctionState.value = state
+  if (state?.session?.teamCount) {
+    auctionTargetTeamCount.value = state.session.teamCount
+  } else if (state?.requestedTeamCount) {
+    auctionTargetTeamCount.value = state.requestedTeamCount
+  }
+  if (selectedCaptainTier.value && !auctionRankOptions.value.some((option: any) => option.tier === selectedCaptainTier.value && option.eligible)) {
+    selectedCaptainTier.value = ''
+  }
+}
+
+const fetchAuctionState = async () => {
+  try {
+    const params = new URLSearchParams()
+    if (auctionTargetTeamCount.value > 0) {
+      params.set('teamCount', String(auctionTargetTeamCount.value))
+    }
+    params.set('_t', String(Date.now()))
+    const res: any = await request.get(`/admin/auction/state?${params.toString()}`)
+    if (res.success) {
+      applyAuctionState(res.data)
+    }
+  } catch (error) {
+    console.error('获取拍卖分队状态失败', error)
+  }
+}
+
+const refreshAuctionOptions = async () => {
+  if (auctionHasSession.value) return
+  if (auctionTargetTeamCount.value < 2) auctionTargetTeamCount.value = 2
+  await fetchAuctionState()
+}
+
+const drawAuctionCaptains = () => {
+  if (!selectedCaptainTier.value) {
+    alert('请先选择可用的队长段位')
+    return
+  }
+  if (!selectedCaptainOption.value?.eligible) {
+    alert('当前段位人数不足，不能抽取队长')
+    return
+  }
+
+  showConfirm(`确定从 ${selectedCaptainTier.value} 段位中抽取 ${auctionTargetTeamCount.value} 名队长吗？`, async () => {
+    isAuctionLoading.value = true
+    try {
+      const res: any = await request.post('/admin/auction/draw-captains', {
+        rankTier: selectedCaptainTier.value,
+        teamCount: auctionTargetTeamCount.value
+      })
+      if (res.success) {
+        applyAuctionState(res.data)
+        alert('队长抽取成功，请将拍卖码私下发给队长')
+      } else {
+        alert(res.message || '抽取队长失败')
+      }
+    } catch (error: any) {
+      alert(error.response?.data?.message || '抽取队长失败')
+    } finally {
+      isAuctionLoading.value = false
+    }
+  })
+}
+
+const drawAuctionPlayer = async () => {
+  isAuctionLoading.value = true
+  try {
+    const res: any = await request.post('/admin/auction/draw-player')
+    if (res.success) {
+      applyAuctionState(res.data)
+    } else {
+      alert(res.message || '抽取拍卖队员失败')
+    }
+  } catch (error: any) {
+    alert(error.response?.data?.message || '抽取拍卖队员失败')
+  } finally {
+    isAuctionLoading.value = false
+  }
+}
+
+const finishAuctionCurrent = () => {
+  showConfirm('确定将当前拍卖队员成交给最高出价队伍吗？', async () => {
+    isAuctionLoading.value = true
+    try {
+      const res: any = await request.post('/admin/auction/finish-current')
+      if (res.success) {
+        applyAuctionState(res.data)
+      } else {
+        alert(res.message || '拍卖成交失败')
+      }
+    } catch (error: any) {
+      alert(error.response?.data?.message || '拍卖成交失败')
+    } finally {
+      isAuctionLoading.value = false
+    }
+  })
+}
+
+const passAuctionCurrent = () => {
+  showConfirm('确定将当前拍卖队员标记为流拍吗？该队员会回到未分配选手池。', async () => {
+    isAuctionLoading.value = true
+    try {
+      const res: any = await request.post('/admin/auction/pass-current')
+      if (res.success) {
+        applyAuctionState(res.data)
+      } else {
+        alert(res.message || '流拍失败')
+      }
+    } catch (error: any) {
+      alert(error.response?.data?.message || '流拍失败')
+    } finally {
+      isAuctionLoading.value = false
+    }
+  })
+}
+
+const manualAssignAuctionPlayer = ({ registrationId, teamId }: { registrationId: number; teamId: number }) => {
+  showConfirm('确定将该选手手动分配到目标队伍吗？', async () => {
+    isAuctionLoading.value = true
+    try {
+      const res: any = await request.post('/admin/auction/manual-assign', { registrationId, teamId })
+      if (res.success) {
+        applyAuctionState(res.data)
+      } else {
+        alert(res.message || '手动分队失败')
+      }
+    } catch (error: any) {
+      alert(error.response?.data?.message || '手动分队失败')
+    } finally {
+      isAuctionLoading.value = false
+    }
+  })
+}
+
+const resetAuction = () => {
+  showConfirm('确定要重置当前拍卖分队吗？队长、拍卖码、竞价和分队结果都会被清空。', async () => {
+    isAuctionLoading.value = true
+    try {
+      const res: any = await request.post('/admin/auction/reset', { teamCount: auctionTargetTeamCount.value })
+      if (res.success) {
+        selectedCaptainTier.value = ''
+        applyAuctionState(res.data)
+      } else {
+        alert(res.message || '重置失败')
+      }
+    } catch (error: any) {
+      alert(error.response?.data?.message || '重置失败')
+    } finally {
+      isAuctionLoading.value = false
+    }
+  })
+}
+
+const stopAuctionRefresh = () => {
+  if (auctionRefreshTimer.value) {
+    window.clearInterval(auctionRefreshTimer.value)
+    auctionRefreshTimer.value = null
+  }
+}
+
+const startAuctionRefresh = () => {
+  if (auctionRefreshTimer.value) return
+  auctionRefreshTimer.value = window.setInterval(() => {
+    if (currentTab.value === 'auction') {
+      fetchAuctionState()
+    }
+  }, 500)
+}
+
+watch(currentTab, (tab) => {
+  if (tab === 'auction') {
+    fetchAuctionState()
+    startAuctionRefresh()
+  } else {
+    stopAuctionRefresh()
+  }
+})
+
+onBeforeUnmount(() => {
+  stopAuctionRefresh()
+})
+
 const handleLogout = () => {
   showConfirm('确定要退出登录吗？', () => {
     localStorage.removeItem('token')
@@ -989,12 +1203,17 @@ const filteredOperators = computed(() => {
     <!-- Sidebar -->
     <div
       :class="[
-        'bg-gray-900 text-white w-full md:w-64 flex-shrink-0 flex-col md:flex transition-all duration-300 ease-in-out',
+        'bg-gray-900 text-white w-full flex-shrink-0 flex-col md:flex transition-all duration-300 ease-in-out',
+        isSidebarCollapsed ? 'md:w-20' : 'md:w-64',
         isMobileMenuOpen ? 'flex absolute inset-0 z-40 pt-16' : 'hidden h-full'
       ]"
     >
-      <div class="p-6 hidden md:block flex-shrink-0">
-        <h1 class="text-xl font-bold">赛事管理后台</h1>
+      <div class="p-4 hidden md:flex items-center justify-between gap-2 flex-shrink-0">
+        <h1 v-if="!isSidebarCollapsed" class="text-xl font-bold">赛事管理后台</h1>
+        <button @click="isSidebarCollapsed = !isSidebarCollapsed" class="p-2 rounded-md text-gray-300 hover:bg-gray-800 hover:text-white transition-colors" :title="isSidebarCollapsed ? '展开菜单' : '收缩菜单'">
+          <ChevronRight v-if="isSidebarCollapsed" class="w-5 h-5" />
+          <ChevronLeft v-else class="w-5 h-5" />
+        </button>
       </div>
       <nav class="mt-2 md:mt-6 px-4 space-y-2 flex-1 overflow-y-auto">
         <a
@@ -1003,30 +1222,31 @@ const filteredOperators = computed(() => {
           href="#"
           @click.prevent="currentTab = item.id; isMobileMenuOpen = false"
           :class="[
-            'flex items-center px-4 py-3 text-sm font-medium rounded-md transition-colors',
+            'flex items-center py-3 text-sm font-medium rounded-md transition-colors',
+            isSidebarCollapsed ? 'md:justify-center md:px-3 px-4' : 'px-4',
             currentTab === item.id 
               ? 'bg-gray-800 text-white' 
               : 'text-gray-300 hover:bg-gray-700 hover:text-white'
           ]"
         >
-          <component :is="item.icon" class="mr-3 w-5 h-5" />
-          {{ item.name }}
+          <component :is="item.icon" :class="['w-5 h-5', isSidebarCollapsed ? 'md:mr-0 mr-3' : 'mr-3']" />
+          <span v-if="!isSidebarCollapsed || isMobileMenuOpen">{{ item.name }}</span>
         </a>
       </nav>
       
       <!-- C端入口与退出 -->
       <div class="px-4 py-4 border-t border-gray-800 space-y-2 flex-shrink-0">
-        <router-link to="/" class="flex items-center px-4 py-3 text-sm font-medium text-gray-400 rounded-md hover:bg-gray-800 hover:text-white transition-colors">
-          <ExternalLink class="mr-3 w-5 h-5" />
-          返回报名大厅
+        <router-link to="/" :class="['flex items-center py-3 text-sm font-medium text-gray-400 rounded-md hover:bg-gray-800 hover:text-white transition-colors', isSidebarCollapsed ? 'md:justify-center md:px-3 px-4' : 'px-4']">
+          <ExternalLink :class="['w-5 h-5', isSidebarCollapsed ? 'md:mr-0 mr-3' : 'mr-3']" />
+          <span v-if="!isSidebarCollapsed || isMobileMenuOpen">返回报名大厅</span>
         </router-link>
-        <router-link to="/board" class="flex items-center px-4 py-3 text-sm font-medium text-gray-400 rounded-md hover:bg-gray-800 hover:text-white transition-colors">
-          <ExternalLink class="mr-3 w-5 h-5" />
-          返回赛事看板
+        <router-link to="/board" :class="['flex items-center py-3 text-sm font-medium text-gray-400 rounded-md hover:bg-gray-800 hover:text-white transition-colors', isSidebarCollapsed ? 'md:justify-center md:px-3 px-4' : 'px-4']">
+          <ExternalLink :class="['w-5 h-5', isSidebarCollapsed ? 'md:mr-0 mr-3' : 'mr-3']" />
+          <span v-if="!isSidebarCollapsed || isMobileMenuOpen">返回赛事看板</span>
         </router-link>
-        <button @click="handleLogout" class="w-full flex items-center px-4 py-3 text-sm font-medium text-red-400 rounded-md hover:bg-gray-800 hover:text-red-300 transition-colors mt-4">
-          <LogOut class="mr-3 w-5 h-5" />
-          退出登录
+        <button @click="handleLogout" :class="['w-full flex items-center py-3 text-sm font-medium text-red-400 rounded-md hover:bg-gray-800 hover:text-red-300 transition-colors mt-4', isSidebarCollapsed ? 'md:justify-center md:px-3 px-4' : 'px-4']">
+          <LogOut :class="['w-5 h-5', isSidebarCollapsed ? 'md:mr-0 mr-3' : 'mr-3']" />
+          <span v-if="!isSidebarCollapsed || isMobileMenuOpen">退出登录</span>
         </button>
       </div>
     </div>
@@ -1074,8 +1294,8 @@ const filteredOperators = computed(() => {
                 <tr>
                   <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">玩家昵称 (战网ID)</th>
                   <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">群组</th>
-                  <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">抖音昵称</th>
-                  <!-- <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">微信昵称</th> -->
+                  <!-- <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">抖音昵称</th> -->
+                  <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">微信昵称</th>
                   <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">首选职责</th>
                   <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">补位职责</th>
                   <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">自填段位</th>
@@ -1230,8 +1450,8 @@ const filteredOperators = computed(() => {
                   <tr>
                     <th scope="col" class="px-4 py-3 text-left w-10"></th>
                     <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">战网ID</th>
-                    <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">抖音昵称</th>
-                    <!-- <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">微信昵称</th> -->
+                    <!-- <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">抖音昵称</th> -->
+                    <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">微信昵称</th>
                     <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">职责与段位</th>
                     <th scope="col" class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
                   </tr>
@@ -1277,6 +1497,116 @@ const filteredOperators = computed(() => {
           </div>
         </div>
 
+        <!-- Auction Management -->
+        <div v-if="currentTab === 'auction'">
+          <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+            <div>
+              <h2 class="text-2xl font-bold text-gray-800">拍卖分队</h2>
+              <p class="text-sm text-gray-500 mt-1">独立于 5V5 / 6V6 分队，使用报名数据作为拍卖候选池。</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button @click="fetchAuctionState" class="px-4 py-2 rounded-md border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors">
+                刷新
+              </button>
+              <button @click="publishAuctionTeams" :disabled="!auctionState?.session" class="px-4 py-2 rounded-md bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:bg-gray-300 transition-colors">
+                发布队伍信息
+              </button>
+              <button @click="clearPublishedAuctionTeams" class="px-4 py-2 rounded-md border border-red-300 text-red-600 text-sm font-medium hover:bg-red-50 transition-colors">
+                删除已发布队伍
+              </button>
+              <button @click="resetAuction" :disabled="!auctionState" class="px-4 py-2 rounded-md bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:bg-gray-300 transition-colors">
+                重置拍卖
+              </button>
+            </div>
+          </div>
+
+          <div v-if="auctionState" class="space-y-6">
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div class="border border-gray-200 rounded-lg p-4 bg-white shadow-sm">
+                <div class="text-xs text-gray-500">报名人数</div>
+                <div class="text-2xl font-bold text-gray-900">{{ auctionState.totalPlayers }}</div>
+              </div>
+              <div class="border border-gray-200 rounded-lg p-4 bg-white shadow-sm">
+                <div class="text-xs text-gray-500">建议队伍</div>
+                <div class="text-2xl font-bold text-gray-900">{{ auctionState.suggestedTeamCount }}</div>
+              </div>
+              <div class="border border-gray-200 rounded-lg p-4 bg-white shadow-sm">
+                <div class="text-xs text-gray-500">目标队伍</div>
+                <div class="text-2xl font-bold text-gray-900">{{ auctionTargetTeamCount }}</div>
+              </div>
+              <div class="border border-gray-200 rounded-lg p-4 bg-white shadow-sm">
+                <div class="text-xs text-gray-500">每队资金</div>
+                <div class="text-2xl font-bold text-gray-900">{{ auctionState.session?.initialBudget || auctionState.initialBudgetPreview }}</div>
+              </div>
+              <div class="border border-gray-200 rounded-lg p-4 bg-white shadow-sm">
+                <div class="text-xs text-gray-500">匿名模式</div>
+                <div class="text-2xl font-bold" :class="auctionState.anonymousMode ? 'text-amber-600' : 'text-gray-900'">{{ auctionState.anonymousMode ? '开启' : '关闭' }}</div>
+              </div>
+            </div>
+
+            <div class="border border-gray-200 rounded-lg bg-white shadow-sm p-5">
+              <div v-if="!auctionHasSession" class="space-y-5">
+                <div class="flex flex-col md:flex-row md:items-end gap-4">
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">目标队伍数</label>
+                    <input
+                      v-model.number="auctionTargetTeamCount"
+                      @change="refreshAuctionOptions"
+                      type="number"
+                      min="2"
+                      class="w-32 border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  <button @click="drawAuctionCaptains" :disabled="!selectedCaptainTier || isAuctionLoading" class="px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:bg-gray-300 transition-colors">
+                    抽取队长
+                  </button>
+                </div>
+
+                <div>
+                  <div class="text-sm font-medium text-gray-700 mb-2">选择队长目标段位</div>
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      v-for="option in auctionRankOptions"
+                      :key="option.tier"
+                      @click="option.eligible && (selectedCaptainTier = option.tier)"
+                      :disabled="!option.eligible"
+                      :class="[
+                        'px-3 py-2 rounded-md border text-sm transition-colors',
+                        selectedCaptainTier === option.tier ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50',
+                        !option.eligible ? 'opacity-40 cursor-not-allowed hover:bg-white' : ''
+                      ]"
+                    >
+                      {{ option.tier }} · {{ option.count }}人
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div v-else class="flex flex-wrap gap-2">
+                <button @click="drawAuctionPlayer" :disabled="!auctionState.actions?.canDrawPlayer || isAuctionLoading" class="px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:bg-gray-300 transition-colors">
+                  下一位
+                </button>
+                <button @click="finishAuctionCurrent" :disabled="!auctionState.actions?.canFinishCurrent || isAuctionLoading" class="px-4 py-2 rounded-md bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:bg-gray-300 transition-colors">
+                  拍卖成交
+                </button>
+                <button @click="passAuctionCurrent" :disabled="!auctionState.actions?.canPassCurrent || isAuctionLoading" class="px-4 py-2 rounded-md bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 disabled:bg-gray-300 transition-colors">
+                  流拍
+                </button>
+              </div>
+            </div>
+
+            <AuctionBoard
+              :state="auctionState"
+              viewer="admin"
+              @manual-assign="manualAssignAuctionPlayer"
+            />
+          </div>
+
+          <div v-else class="border-2 border-dashed border-gray-200 rounded-lg p-12 text-center text-gray-500">
+            正在加载拍卖分队信息...
+          </div>
+        </div>
+
         <!-- Announcement Management -->
         <div v-if="currentTab === 'announcement'">
           <div class="flex justify-between items-center mb-6">
@@ -1315,19 +1645,24 @@ const filteredOperators = computed(() => {
                 <button @click="setScheduleMode('5v5')" :class="scheduleMode === '5v5' ? 'bg-gray-800 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'" class="px-3 py-1.5 text-sm font-medium transition-colors">
                   5V5
                 </button>
-                <button @click="setScheduleMode('6v6')" :class="scheduleMode === '6v6' ? 'bg-gray-800 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'" class="px-3 py-1.5 text-sm font-medium transition-colors border-l border-gray-200">
+              <button @click="setScheduleMode('6v6')" :class="scheduleMode === '6v6' ? 'bg-gray-800 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'" class="px-3 py-1.5 text-sm font-medium transition-colors border-l border-gray-200">
                   6V6
                 </button>
+                <!-- 拍卖分队当前只发布队伍信息，不在赛程安排页启用对局管理。
+                <button @click="setScheduleMode('auction')" :class="scheduleMode === 'auction' ? 'bg-gray-800 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'" class="px-3 py-1.5 text-sm font-medium transition-colors border-l border-gray-200">
+                  拍卖分队
+                </button>
+                -->
               </div>
             </div>
             <div class="space-x-3">
               <button @click="saveScheduleChanges" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
                 保存修改
               </button>
-              <button @click="publishSchedule" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
+              <button @click="publishSchedule()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
                 重新发布赛程
               </button>
-              <button @click="clearSchedule" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
+              <button @click="clearSchedule()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium transition-colors">
                 清空赛程
               </button>
             </div>
